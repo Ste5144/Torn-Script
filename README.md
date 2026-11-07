@@ -59,8 +59,9 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 - Choose a period from 7 days to 12 months; every figure recalculates.
 - Item payouts are valued at the live lowest listing or market value, optionally less the 5% tax. Points use the points market; energy uses the cheapest Red Cow ÷ 25; nerve and happiness use values you set.
 - Shows block value, value per payout, payouts in the period, income, yield per year, what the sale money would earn at your chosen alternative return, and a Keep or Sell candidate verdict.
-- Click a column heading to sort; untick a row to leave it out of the totals. Edit `BLOCKS` at the top of the script if your holdings change.
+- Click a column heading to sort. Untick a row to hide it and leave it out of the totals; **Show hidden** brings unticked rows back so you can tick them again; **Tick all** and **Untick all** reset the selection. Edit `BLOCKS` at the top of the script if your holdings change.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0 | 7 Nov 2026 | Unticked rows hide; Show hidden, Tick all and Untick all. |
 | 1.0.1 | 7 Nov 2026 | First version, on GitHub with automatic updates. |

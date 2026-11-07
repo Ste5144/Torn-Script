@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.0.1
+// @version      1.1.0
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Read-only API calls with a Public key. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
@@ -47,7 +47,7 @@
   const save = () => { try { localStorage.setItem(LS, JSON.stringify(S)); } catch {} };
   const S = Object.assign({
     key: '', days: 91, altRate: 0, sellItems: true, priceMode: 'low',
-    nerveVal: 5000, energyVal: null, happyVal: 0, pointVal: null, data: null, off: {}
+    nerveVal: 5000, energyVal: null, happyVal: 0, pointVal: null, data: null, off: {}, showHidden: false
   }, load());
   // reuse the flip tracker's key if this one is blank
   if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
@@ -164,6 +164,8 @@
       <span title="What you could earn on the sale money elsewhere, per year. 0 = cash sits idle.">Alt return <input id="a" type="number" value="${S.altRate}" style="width:50px">%/yr</span>
       <span>Price <select id="pm"><option value="low" ${S.priceMode === 'low' ? 'selected' : ''}>Lowest listing</option><option value="mv" ${S.priceMode === 'mv' ? 'selected' : ''}>Market value</option></select></span>
       <label><input id="t" type="checkbox" ${S.sellItems ? 'checked' : ''}> less 5% tax</label>
+      <button id="all">Tick all</button><button id="none">Untick all</button>
+      <label title="Show unticked rows so you can tick them again"><input id="sh" type="checkbox" ${S.showHidden ? 'checked' : ''}> Show hidden (${Object.values(S.off).filter(Boolean).length})</label>
       <button id="r">Refresh prices</button><button id="x">Close</button>
       <span class="muted" id="st">${msg || (d ? 'Prices ' + new Date(d.t).toLocaleString() : 'Press Refresh prices')}</span></div>
       <div class="bar" style="top:auto;position:static">
@@ -171,7 +173,7 @@
       <span>$/energy <input id="ev" type="number" value="${S.energyVal || ''}" placeholder="${energyVal() ? Math.round(energyVal()) : 'auto'}" style="width:80px"></span>
       <span>$/point <input id="pv" type="number" value="${S.pointVal || ''}" placeholder="${d && d.pointLow ? d.pointLow : 'auto'}" style="width:70px"></span>
       <span>$/happy <input id="hv" type="number" value="${S.happyVal}" style="width:60px"></span>
-      <span class="muted">Blank = live price (energy from ${ENERGY_REF.item} ÷ ${ENERGY_REF.energy}). Untick a row to exclude it from totals.</span></div>`;
+      <span class="muted">Blank = live price (energy from ${ENERGY_REF.item} ÷ ${ENERGY_REF.energy}). Untick a row to hide it and leave it out of the totals.</span></div>`;
     if (d) {
       const rows = BLOCKS.map((b, i) => ({ b, i, ...calc(b) }));
       rows.sort((x, y) => sortKey === 'acr' ? (x.b.acr + x.b.blk).localeCompare(y.b.acr + y.b.blk) * sortDir : ((x[sortKey] ?? -1e18) - (y[sortKey] ?? -1e18)) * sortDir);
@@ -181,6 +183,7 @@
         <th data-s="payouts">Payouts</th><th data-s="income">Income ${label}</th><th data-s="yld">Yield/yr</th><th data-s="alt">Sale money earns</th><th data-s="edge">Keep advantage</th><th>Verdict</th></tr>`;
       rows.forEach(({ b, i, value, per, basis, payouts, income, yld, alt, edge }) => {
         const off = S.off[i];
+        if (off && !S.showHidden) return;
         if (!off) { tv += value || 0; ti += income || 0; ta += alt || 0; }
         const verdict = edge == null ? '<span class="muted">–</span>'
           : edge > 0 ? '<span class="up">Keep</span>' : '<span class="dn">Sell candidate</span>';
@@ -189,7 +192,7 @@
           <td>${$m(value)}</td><td>${$m(per)}</td><td>${payouts.toFixed(1)}</td><td>${$m(income)}</td><td>${pct(yld)}</td><td>${$m(alt)}</td>
           <td class="${edge > 0 ? 'up' : edge < 0 ? 'dn' : ''}">${$m(edge)}</td><td>${verdict}</td></tr>`;
       });
-      h += `<tr><td></td><td><b>Total</b></td><td></td><td><b>${$m(tv)}</b></td><td></td><td></td><td><b>${$m(ti)}</b></td><td><b>${pct(tv ? ti / tv * 365 / S.days : null)}</b></td><td><b>${$m(ta)}</b></td><td><b>${$m(ti - ta)}</b></td><td></td></tr></table>
+      h += `<tr><td></td><td><b>Total (${BLOCKS.length - Object.values(S.off).filter(Boolean).length} ticked)</b></td><td></td><td><b>${$m(tv)}</b></td><td></td><td></td><td><b>${$m(ti)}</b></td><td><b>${pct(tv ? ti / tv * 365 / S.days : null)}</b></td><td><b>${$m(ta)}</b></td><td><b>${$m(ti - ta)}</b></td><td></td></tr></table>
         <div class="muted" style="margin-top:6px">Income = per-payout value × (period ÷ payout interval), pro-rata. Cash blocks pay every 31 days, so short periods may see 0 or 1 actual payout.
         "Sale money earns" = block value × alt return over the period, less the 0.1% sale fee. Selling resets the benefit timer and rebuying later is at the then share price.
         ${d.missing.length ? '<br><span class="dn">Item not found: ' + d.missing.join(', ') + '</span>' : ''}</div></div>`;
@@ -206,6 +209,9 @@
     on('#ev', 'onchange', (e) => { S.energyVal = +e.target.value || null; save(); render(); });
     on('#pv', 'onchange', (e) => { S.pointVal = +e.target.value || null; save(); render(); });
     on('#hv', 'onchange', (e) => { S.happyVal = +e.target.value || 0; save(); render(); });
+    on('#all', 'onclick', () => { S.off = {}; save(); render(); });
+    on('#none', 'onclick', () => { BLOCKS.forEach((b, i) => { S.off[i] = true; }); S.showHidden = true; save(); render(); });
+    on('#sh', 'onchange', (e) => { S.showHidden = e.target.checked; save(); render(); });
     P.querySelectorAll('input[data-i]').forEach((c) => c.onchange = (e) => { S.off[e.target.dataset.i] = !e.target.checked; save(); render(); });
     P.querySelectorAll('th[data-s]').forEach((th) => th.onclick = () => {
       const k = th.dataset.s; sortDir = sortKey === k ? -sortDir : (k === 'acr' ? 1 : -1); sortKey = k; render();
