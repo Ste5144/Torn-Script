@@ -7,6 +7,8 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Script | Runs on | API key | Install |
 |---|---|---|---|
 | Archer Mining Co Advisor | Company page (`companies.php`) | Limited | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-mining-advisor.user.js) |
+| Flip Tracker | Item Market and Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-flip-tracker.user.js) |
+| Stock Payout Calculator | Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js) |
 
 ## Installing
 
@@ -27,10 +29,38 @@ A panel on the company page (green **AMC advisor** button, bottom right) with fo
 
 Make role changes in small steps and check the next day's income before making more.
 
-## Versions
+### Versions
 
 | Version | Date | Change |
 |---|---|---|
 | 2.0.1 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
 | 2.0.0 | 7 Nov 2026 | Allocation scores total EE and fills Sales Executive and Secretary first. |
 | 1.x | 6 Nov 2026 | First versions (working-stats allocation; superseded). |
+
+## Flip Tracker
+
+A panel on the Item Market and Stock Market pages (green **Flip tracker** button, bottom left) for holding items to sell later:
+
+- **Funding sources**: each stock block you could sell, its live value and yield, and how much an item must rise over your hold period to beat keeping the block (after the 5% market tax and 0.1% stock fee).
+- **Watchlist**: lowest item market price and market value, 7-day and 30-day change, 12-month low and high (chart readings plus your own snapshots), a Cheap/Fair/Dear signal, net upside to the pre-crash price and to the 12-month high, and your positions with profit after tax.
+- Takes one snapshot a day automatically when a page loads; **Copy CSV** exports the history. Edit `WATCHLIST` and `HISTORY` at the top of the script to change items.
+
+| Version | Date | Change |
+|---|---|---|
+| 1.1.2 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
+| 1.1.1 | 6 Nov 2026 | Rockstar Rudolph and Erotic DVD baselines. |
+| 1.1.0 | 6 Nov 2026 | 12-month baselines, signal and upside columns. |
+| 1.0.x | 6 Nov 2026 | First version; panel moved left; text contrast fixed. |
+
+## Stock Payout Calculator
+
+A panel on the Stock Market page (blue **Stock payouts** button, bottom left, above the Flip tracker button) that values every benefit block:
+
+- Choose a period from 7 days to 12 months; every figure recalculates.
+- Item payouts are valued at the live lowest listing or market value, optionally less the 5% tax. Points use the points market; energy uses the cheapest Red Cow ÷ 25; nerve and happiness use values you set.
+- Shows block value, value per payout, payouts in the period, income, yield per year, what the sale money would earn at your chosen alternative return, and a Keep or Sell candidate verdict.
+- Click a column heading to sort; untick a row to leave it out of the totals. Edit `BLOCKS` at the top of the script if your holdings change.
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0.1 | 7 Nov 2026 | First version, on GitHub with automatic updates. |
