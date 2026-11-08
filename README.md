@@ -113,11 +113,12 @@ A panel on the casino's High-Low page that reads the dealer card and your card a
 - **Guess**: the best pick against the dealer card and its win chance, worked out from the cards still in the deck.
 - **Collect or continue**: after a win, the value of carrying on (averaged over every card the next dealer card could be) against banking the pot. At a 25% modifier this is about ×0.90, so it nearly always says collect.
 - **Chance modifier**: read from the page's "Current modifier" figure.
-- **Outcome log**: every round and game, exported as CSV. A wrong guess ends a game automatically (a draw does not); press **Collected** or **Took 50%** when you cash in. Enter your bet so each game shows a profit.
+- **Outcome log**: every round and game, exported as CSV. A loss or a Cash In is logged automatically, checked against Torn's "wins in a row" count (a draw carries on). The Collected and Took 50% buttons are there as a backup. Enter your bet so each game shows a profit.
 - A game in progress survives a page reload or script update (for 30 minutes). **New game** picks up a dealer card already showing.
 
 | Version | Date | Change |
 |---|---|---|
+| 6.3.0 | 8 Nov 2026 | Wins and losses checked against Torn's own "wins in a row" count, so a missed button press no longer turns a loss into a win. Cash In is logged automatically, with the payout taken from the pot. |
 | 6.2.1 | 8 Nov 2026 | A draw no longer ends the game: it is treated as a push and the deck carries on. Ties setting removed. |
 | 6.2.0 | 8 Nov 2026 | Moved to GitHub with automatic updates. Game in progress kept across reloads; New game reads the card on the table; chance modifier read from the page. |
 | 6.1.0 | 8 Nov 2026 | Reads cards correctly now Torn flips them between two faces (the hidden face can hold the previous card). |

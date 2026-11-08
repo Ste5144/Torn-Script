@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn High-Low Helper (display only)
 // @namespace    sterlingarcher.torn
-// @version      6.2.1
+// @version      6.3.0
 // @description  Tracks dealer and player cards through the deck, shows Higher/Lower odds from the cards left, advises Collect vs Continue, and logs outcomes to CSV. Display only: no clicks, no extra server requests.
 // @match        https://www.torn.com/*highlow*
 // @grant        none
@@ -170,6 +170,7 @@
       logLine('reshuffle on 5th ' + label(r));
     }
     const result = role === 'yours' ? recordRound(r) : null;
+    if (role === 'dealer') state.streakAtDeal = state.streak == null ? null : state.streak;
     state.hist.push({ r, role });
     logLine((role === 'dealer' ? 'dealer ' : 'yours  ') + label(r));
     state.undoGame = null;
@@ -192,8 +193,13 @@
     const guess = state.guess || o.pick;
     const guessSeen = !!state.guess;
     state.guess = null;
-    const result = yours === d.r ? 'tie'
+    let result = yours === d.r ? 'tie'
       : (guess === 'HIGHER' ? yours > d.r : yours < d.r) ? 'win' : 'lose';
+    // If Torn's "wins in a row" has already moved, trust it over the button guess.
+    const before = state.streakAtDeal, now = state.streak;
+    let source = guessSeen ? 'button' : 'assumed';
+    if (before != null && now != null && now > before) { result = 'win'; source = 'Torn streak'; }
+    else if (before != null && before > 0 && (now == null || now < before)) { result = 'lose'; source = 'Torn streak'; }
     const after = remaining(); after[yours] = Math.max(0, after[yours] - (state.track ? 1 : 0));
     const cv = result === 'win' ? continueValue(after) : null;
     const inGame = state.rounds.filter(x => x.game === state.gameId).length;
@@ -203,6 +209,7 @@
       pHigher: +(o.hi * 100).toFixed(1), pLower: +(o.lo * 100).toFixed(1), pTie: +(o.tie * 100).toFixed(1),
       pick: o.pick, winPct: +(o.win * 100).toFixed(1),
       guess: guessSeen ? guess : guess + ' (assumed)', followedAdvice: guess === o.pick ? 'yes' : 'no', result,
+      resultFrom: source, ts: Date.now(),
       continueValue: cv == null ? '' : +cv.toFixed(3),
       advice: cv == null ? '' : (cv < 1 ? 'COLLECT' : 'CONTINUE')
     });
@@ -322,6 +329,11 @@
 
   function detect() {
     readMod();
+    detectCards();
+    readStreak();
+  }
+
+  function detectCards() {
     if (state.manual) return;
     const now = { dealer: readSlot('dealer'), yours: readSlot('yours') };
     const keyOf = role => (now[role] ? now[role].key : '');
@@ -365,14 +377,89 @@
     render();
   }
 
-  // Passive: notes which button you pressed, so the log records your actual guess.
-  // It never clicks anything itself.
+  // Passive: notes which button you pressed, so the log records your actual guess,
+  // and when you press Cash In. It never clicks anything itself.
   document.addEventListener('click', e => {
-    const b = e.target && e.target.closest && e.target.closest('.action-btn-wrap');
-    if (!b || b.closest('#thl-panel')) return;
-    if (b.classList.contains('high')) state.guess = 'HIGHER';
-    else if (b.classList.contains('low')) state.guess = 'LOWER';
+    const t = e.target;
+    if (!t || !t.closest || t.closest('#thl-panel')) return;
+    const b = t.closest('.action-btn-wrap');
+    if (b) {
+      if (b.classList.contains('high')) state.guess = 'HIGHER';
+      else if (b.classList.contains('low')) state.guess = 'LOWER';
+      return;
+    }
+    // Fallback: a button whose text is "Higher"/"Lower", or "Cash in".
+    const el = t.closest('button, a, [role="button"], [class*="btn" i], [class*="button" i]') || t;
+    const txt = (el.textContent || '').trim().toLowerCase();
+    if (txt.length > 40) return;
+    if (/^high(er)?$/.test(txt)) state.guess = 'HIGHER';
+    else if (/^low(er)?$/.test(txt)) state.guess = 'LOWER';
+    else if (/cash\s*in/.test(txt)) {
+      state.cashClick = { t: Date.now(), how: /half/.test(txt) ? 'half' : 'collected', pot: state.pot };
+      logLine('cash in pressed: ' + state.cashClick.how + (state.pot ? ' $' + state.pot.toLocaleString() : ''));
+    }
   }, true);
+
+  // ---------- Torn's own game state: "(2 wins in a row)" and "CURRENT POT: $1,562,500" ----------
+  // Ground truth for wins and losses, so a missed button press can't turn a loss into a win.
+  function readStreak() {
+    const text = document.body.textContent || '';
+    const pm = text.match(/current\s*pot\s*:?\s*\$\s*([\d,]+)/i);
+    state.pot = pm ? Number(pm[1].replace(/,/g, '')) : null;
+    const m = text.match(/\(\s*(\d+)\s+wins?\s+in\s+a\s+row\s*\)/i);
+    const s = m ? Number(m[1]) : null;
+    if (state.streak === undefined) { state.streak = s; return; }   // first look: baseline only
+    if (s === state.streak) return;
+    const prev = state.streak;
+    state.streak = s;
+    logLine('Torn streak ' + (prev == null ? '-' : prev) + ' -> ' + (s == null ? '-' : s));
+
+    const rs = state.rounds.filter(x => x.game === state.gameId);
+    const lastRound = rs[rs.length - 1];
+
+    // Streak went UP straight after the script ended a game as lost: it was a win.
+    if (s != null && prev != null && s > prev && state.undoGame && !state.hist.length) {
+      const g = state.games[state.games.length - 1];
+      if (g && g.game === state.undoGame.gameId) state.games.pop();
+      state.hist = state.undoGame.hist;
+      state.gameId = state.undoGame.gameId;
+      state.undoGame = null;
+      const r = state.rounds.filter(x => x.game === state.gameId).pop();
+      if (r) { r.result = 'win'; r.corrected = 'Torn streak'; }
+      saveLog();
+      flash('Corrected: Torn shows a win, game continues.');
+      logLine('corrected loss -> win from Torn streak');
+      return;
+    }
+
+    // Streak went DOWN or disappeared while a game is open: the game is over.
+    if (rs.length && (s == null || (prev != null && s < prev))) {
+      const cash = state.cashClick && Date.now() - state.cashClick.t < 20000 ? state.cashClick : null;
+      state.cashClick = null;
+      if (cash) {
+        if (cash.pot && !document.getElementById('thl-pay').value) {
+          document.getElementById('thl-pay').value = String(cash.how === 'half' ? Math.round(cash.pot / 2) : cash.pot);
+        }
+        endGame(cash.how);
+        flash(cash.how === 'half' ? 'Took 50%: game logged.' : 'Cashed in: game logged.');
+      } else {
+        // No cash-in seen. If a round was just played, Torn ended the game on it: a loss.
+        const justPlayed = lastRound && lastRound.ts && Date.now() - lastRound.ts < 8000;
+        if (justPlayed) {
+          if (lastRound.result === 'win') {
+            lastRound.result = 'lose'; lastRound.corrected = 'Torn streak';
+            logLine('corrected win -> lose from Torn streak');
+          }
+          endGame('lost');
+          flash('Torn ended the game: logged as lost.');
+        } else {
+          // No new card and no Cash In click seen: can't tell a cash-in from a loss.
+          endGame('unrecorded');
+          flash('Game ended (cash-in or loss not seen): logged as not recorded.');
+        }
+      }
+    }
+  }
 
   // ---------- Odds ----------
   function oddsFrom(rank, left) {
@@ -625,6 +712,11 @@
       'URL: ' + location.pathname + location.search,
       'Detected: ' + (findCards().map(c => (c.role || '?') + ' ' + label(c.r) + ' ' + c.suit).join(', ') || 'none'),
       'Deck history: ' + state.hist.map(c => (c.role === 'dealer' ? 'D' : 'Y') + label(c.r)).join(' '),
+      'Torn streak: ' + (state.streak == null ? 'not shown' : state.streak) + ' | pot: ' + (state.pot == null ? 'not shown' : '$' + state.pot.toLocaleString()),
+      'Pot box text: ' + (((document.body.textContent || '').match(/current\s*pot[\s\S]{0,120}/i) || ['not found'])[0]).replace(/\s+/g, ' '),
+      'Buttons: ' + Array.from(document.querySelectorAll('button, a, [class*="btn" i]'))
+        .filter(el => !el.closest('#thl-panel') && el.offsetParent !== null && /high|low|cash|start|bet/i.test(el.textContent + ' ' + el.className))
+        .slice(0, 8).map(el => String(el.className).slice(0, 40) + ' "' + (el.textContent || '').trim().slice(0, 20) + '"').join(' | '),
       '',
       'Card-related classes on page (first 40):',
       ...Array.from(classes).slice(0, 40),
