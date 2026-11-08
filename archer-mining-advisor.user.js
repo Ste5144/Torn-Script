@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.0.1
+// @version      2.0.2
 // @description  Display-only company advisor for a Mining Corporation: staff allocation by total EE with Sales Executive and Secretary filled first, staff health, and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
@@ -180,7 +180,9 @@ function hungarian(c) {
     const r = REQ[norm(role)]; if (!r) return null;
     return statEE(e[r.p[0]], r.p[1], b) + statEE(e[r.s[0]], r.s[1], b);
   }
-  const baseOf = e => (e.total && e.tornWS) ? e.total - e.tornWS : 0;
+  // Fixed bonuses that move with the person: settled-in, merits, education, addiction, inactivity.
+  // Management is left out: the Site Manager boosts only underperformers, so it depends on the role.
+  const baseOf = e => (e.total && e.tornWS) ? e.total - e.tornWS - (+(e.eff && e.eff.management) || 0) : 0;
   const tot = (e, role, b) => { const w = wsEE(e, role, b); return w == null ? null : w + baseOf(e); };
   function fitBonus(emps) {
     const known = emps.filter(e => e.tornWS > 0 && REQ[norm(e.position)]);

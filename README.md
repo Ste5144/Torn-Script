@@ -33,6 +33,7 @@ Make role changes in small steps and check the next day's income before making m
 
 | Version | Date | Change |
 |---|---|---|
+| 2.0.2 | 8 Nov 2026 | Total EE no longer counts the Site Manager's management boost, which only applies to underperformers and was inflating some people's scores in other roles. |
 | 2.0.1 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
 | 2.0.0 | 7 Nov 2026 | Allocation scores total EE and fills Sales Executive and Secretary first. |
 | 1.x | 6 Nov 2026 | First versions (working-stats allocation; superseded). |
