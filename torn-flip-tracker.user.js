@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.2.0
+// @version      1.2.1
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -83,7 +83,13 @@
   const save = (s) => { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch {} };
   let S = Object.assign({ key: '', snaps: [], positions: {}, months: 5, ids: {} }, load());
 
-  const fmt = (n) => n == null || isNaN(n) ? '–' : '$' + Math.round(n).toLocaleString();
+  const fmt = (n) => {
+    if (n == null || isNaN(n)) return '–';
+    const a = Math.abs(n), sg = n < 0 ? '-$' : '$';
+    if (a >= 1e9) return sg + (a / 1e9).toFixed(3) + 'b';
+    if (a >= 1e6) return sg + (a / 1e6).toFixed(a >= 1e8 ? 0 : 2) + 'm';
+    return sg + Math.round(a).toLocaleString();
+  };
   const pct = (n) => n == null || isNaN(n) ? '–' : (n * 100).toFixed(1) + '%';
   const api = async (url) => {
     const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(S.key) + '&comment=fliptracker');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.3.0
+// @version      1.3.1
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Detects your holdings from the API (Limited key) or falls back to a fixed list. Read-only API calls. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
@@ -44,7 +44,15 @@
   if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('stockPayoutCalc.v2')) || {}).key || (JSON.parse(localStorage.getItem('stockPayoutCalc.v1')) || {}).key || (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
 
   const $ = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
-  const $m = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + (Math.abs(n) / 1e6).toFixed(Math.abs(n) >= 1e8 ? 0 : 1) + 'm';
+  // $1.234b for billions, $123m / $12.3m for millions, $456k below a million
+  const $m = (n) => {
+    if (n == null || isNaN(n)) return '–';
+    const a = Math.abs(n), sg = n < 0 ? '-$' : '$';
+    if (a >= 1e9) return sg + (a / 1e9).toFixed(3) + 'b';
+    if (a >= 1e6) return sg + (a / 1e6).toFixed(a >= 1e8 ? 0 : 1) + 'm';
+    if (a >= 1e3) return sg + Math.round(a / 1e3) + 'k';
+    return sg + Math.round(a);
+  };
   const pct = (n) => n == null || isNaN(n) ? '–' : (n * 100).toFixed(1) + '%';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function api(url) {
