@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.4.1
+// @version      1.4.2
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.4.1';
+  const VERSION = '1.4.2';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -172,8 +172,13 @@
   function guideNote(title, v, rarity) {
     const g = GUIDE[norm(title)];
     if (!g) return '';
+    // Judge each bonus by its own value: a weapon's colour comes from its best bonus,
+    // so a second bonus can be a lower-colour roll. Use the band that contains the value,
+    // else the highest band it reaches; the weapon's colour only breaks ties.
     const cols = { yellow: 1, orange: 2, red: 3 };
-    let ci = cols[rarity] || 0;
+    let ci = 0;
+    const inside = [1, 2, 3].filter((i) => g[i] && v >= g[i][0] && v <= g[i][1]);
+    if (inside.length) ci = inside.includes(cols[rarity]) ? cols[rarity] : inside[inside.length - 1];
     if (!ci) for (let i = 3; i >= 1; i--) if (g[i] && v >= g[i][0]) { ci = i; break; }
     if (!ci) ci = 1;
     const band = g[ci];
