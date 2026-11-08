@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.1.2
+// @version      1.1.3
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -28,21 +28,18 @@
   // payout: an item name (valued at live market value), or cash: amount. days = payout interval.
   // valueOverride: $ per payout for non-tradeable benefits (nerve, happiness, points).
   const BLOCKS = [
-    { acr: 'EVL', blk: 1, shares: 300000,   payout: 'happiness', valueOverride: 0, days: 7, note: 'Marauder plan: sell' },
-    { acr: 'CBD', blk: 1, shares: 350000,   payout: '50 nerve', valueOverride: 250000, days: 7, note: 'Marauder plan: sell' },
-    { acr: 'ASS', blk: 1, shares: 1000000,  payout: 'Six-Pack of Alcohol', days: 7, note: 'Marauder plan: sell' },
-    { acr: 'PTS', blk: 2, shares: 20000000, payout: '100 points', valueOverride: 4000000, days: 7, note: 'Needed for nerve refills' },
-    { acr: 'FHG', blk: 2, shares: 4000000,  payout: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'SYM', blk: 2, shares: 1000000,  payout: 'Drug Pack', days: 7 },
-    { acr: 'LSC', blk: 1, shares: 500000,   payout: 'Lottery Voucher', days: 7 },
-    { acr: 'EWM', blk: 1, shares: 1000000,  payout: 'Box of Grenades', days: 7 },
+    { acr: 'FHG', blk: 2, shares: 4000000,  payout: 'Feathery Hotel Coupon', days: 7 },
+    { acr: 'PRN', blk: 2, shares: 2000000,  payout: 'Erotic DVD', days: 7 },
     { acr: 'MUN', blk: 1, shares: 5000000,  payout: 'Six-Pack of Energy Drink', days: 7 },
     { acr: 'TMI', blk: 1, shares: 6000000,  cash: 25000000, days: 31 },
     { acr: 'IOU', blk: 1, shares: 3000000,  cash: 12000000, days: 31 },
     { acr: 'GRN', blk: 1, shares: 500000,   cash: 4000000,  days: 31 },
-    { acr: 'THS', blk: 1, shares: 150000,   payout: 'Box of Medical Supplies', days: 7 },
-    { acr: 'TCT', blk: 2, shares: 200000,   cash: 1000000,  days: 31, note: 'Confirm still held' },
-    { acr: 'PRN', blk: 2, shares: 2000000,  payout: 'Erotic DVD', days: 7, note: 'Confirm still held' }
+    { acr: 'HRG', blk: 1, shares: 10000000, payout: 'property', valueOverride: 5000000, days: 31, note: 'Edit valueOverride to avg property sale' },
+    { acr: 'PTS', blk: 1, shares: 10000000, payout: '100 points', valueOverride: 4000000, days: 7, note: 'Needed for nerve refills' },
+    { acr: 'PRN', blk: 1, shares: 1000000,  payout: 'Erotic DVD', days: 7 },
+    { acr: 'FHG', blk: 1, shares: 2000000,  payout: 'Feathery Hotel Coupon', days: 7 },
+    { acr: 'SYM', blk: 1, shares: 500000,   payout: 'Drug Pack', days: 7 }
   ];
 
   // 12-month baseline read from in-game item charts (approx., read by eye 6 Nov 2026).

@@ -51,6 +51,7 @@ A panel on the Item Market and Stock Market pages (green **Flip tracker** button
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.3 | 8 Nov 2026 | Funding table matches holdings at 8 Nov (HRG added, sold blocks removed). |
 | 1.1.2 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.1.1 | 6 Nov 2026 | Rockstar Rudolph and Erotic DVD baselines. |
 | 1.1.0 | 6 Nov 2026 | 12-month baselines, signal and upside columns. |
@@ -67,6 +68,7 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0 | 8 Nov 2026 | Blocks match holdings at 8 Nov (HRG added, sold blocks removed); $/property input for HRG. Hidden-row ticks reset. |
 | 1.1.0 | 7 Nov 2026 | Unticked rows hide; Show hidden, Tick all and Untick all. |
 | 1.0.1 | 7 Nov 2026 | First version, on GitHub with automatic updates. |
 

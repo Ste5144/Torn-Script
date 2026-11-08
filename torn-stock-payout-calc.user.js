@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.1.0
+// @version      1.2.0
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Read-only API calls with a Public key. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
@@ -21,36 +21,28 @@
     { acr: 'FHG', blk: 1, shares: 2000000,  kind: 'item', item: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'FHG', blk: 2, shares: 4000000,  kind: 'item', item: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'PRN', blk: 1, shares: 1000000,  kind: 'item', item: 'Erotic DVD', days: 7 },
-    { acr: 'PRN', blk: 2, shares: 2000000,  kind: 'item', item: 'Erotic DVD', days: 7, note: 'Confirm held' },
+    { acr: 'PRN', blk: 2, shares: 2000000,  kind: 'item', item: 'Erotic DVD', days: 7 },
     { acr: 'MUN', blk: 1, shares: 5000000,  kind: 'item', item: 'Six-Pack of Energy Drink', days: 7 },
-    { acr: 'ASS', blk: 1, shares: 1000000,  kind: 'item', item: 'Six-Pack of Alcohol', days: 7 },
-    { acr: 'EWM', blk: 1, shares: 1000000,  kind: 'item', item: 'Box of Grenades', days: 7 },
-    { acr: 'LSC', blk: 1, shares: 500000,   kind: 'item', item: 'Lottery Voucher', days: 7 },
-    { acr: 'THS', blk: 1, shares: 150000,   kind: 'item', item: 'Box of Medical Supplies', days: 7 },
-    { acr: 'TCT', blk: 1, shares: 100000,   kind: 'cash', amount: 1000000,  days: 31 },
-    { acr: 'TCT', blk: 2, shares: 200000,   kind: 'cash', amount: 1000000,  days: 31, note: 'Confirm held' },
     { acr: 'GRN', blk: 1, shares: 500000,   kind: 'cash', amount: 4000000,  days: 31 },
     { acr: 'IOU', blk: 1, shares: 3000000,  kind: 'cash', amount: 12000000, days: 31 },
     { acr: 'TMI', blk: 1, shares: 6000000,  kind: 'cash', amount: 25000000, days: 31 },
-    { acr: 'PTS', blk: 1, shares: 10000000, kind: 'points', qty: 100, days: 7 },
-    { acr: 'PTS', blk: 2, shares: 20000000, kind: 'points', qty: 100, days: 7, note: 'Used for nerve refills' },
-    { acr: 'MCS', blk: 1, shares: 350000,   kind: 'energy', qty: 100, days: 7 },
-    { acr: 'CBD', blk: 1, shares: 350000,   kind: 'nerve', qty: 50, days: 7 },
-    { acr: 'EVL', blk: 1, shares: 300000,   kind: 'happy', qty: 2000, days: 7 }
+    { acr: 'HRG', blk: 1, shares: 10000000, kind: 'property', days: 31, note: 'Set $/property to your average sale price' },
+    { acr: 'PTS', blk: 1, shares: 10000000, kind: 'points', qty: 100, days: 7, note: 'Used for nerve refills' },
+    { acr: 'MCS', blk: 1, shares: 350000,   kind: 'energy', qty: 100, days: 7 }
   ];
   const HORIZONS = [[7, '7 days'], [14, '14 days'], [30, '1 month'], [61, '2 months'], [91, '3 months'], [182, '6 months'], [273, '9 months'], [365, '12 months']];
   const ENERGY_REF = { item: 'Can of Red Cow', energy: 25 }; // default $/energy = cheapest Red Cow / 25
-  const LS = 'stockPayoutCalc.v1';
+  const LS = 'stockPayoutCalc.v2';
 
   // ---------- STATE ----------
   const load = () => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } };
   const save = () => { try { localStorage.setItem(LS, JSON.stringify(S)); } catch {} };
   const S = Object.assign({
     key: '', days: 91, altRate: 0, sellItems: true, priceMode: 'low',
-    nerveVal: 5000, energyVal: null, happyVal: 0, pointVal: null, data: null, off: {}, showHidden: false
+    nerveVal: 5000, energyVal: null, happyVal: 0, propVal: 5000000, pointVal: null, data: null, off: {}, showHidden: false
   }, load());
   // reuse the flip tracker's key if this one is blank
-  if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
+  if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('stockPayoutCalc.v1')) || {}).key || (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
 
   const $ = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const $m = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + (Math.abs(n) / 1e6).toFixed(Math.abs(n) >= 1e8 ? 0 : 1) + 'm';
@@ -126,6 +118,7 @@
     } else if (b.kind === 'points') { const v = pointVal(); per = v ? v * b.qty : null; basis = b.qty + ' points @ ' + $(v); }
     else if (b.kind === 'energy') { const v = energyVal(); per = v ? v * b.qty : null; basis = b.qty + ' energy @ ' + $(v) + '/E'; }
     else if (b.kind === 'nerve') { per = S.nerveVal * b.qty; basis = b.qty + ' nerve @ ' + $(S.nerveVal) + '/N'; }
+    else if (b.kind === 'property') { per = S.propVal; basis = 'property @ ' + $m(S.propVal); }
     else if (b.kind === 'happy') { per = S.happyVal * b.qty; basis = b.qty + ' happy @ ' + $(S.happyVal) + '/H'; }
     const payouts = S.days / b.days;
     const income = per == null ? null : per * payouts;
@@ -173,6 +166,7 @@
       <span>$/energy <input id="ev" type="number" value="${S.energyVal || ''}" placeholder="${energyVal() ? Math.round(energyVal()) : 'auto'}" style="width:80px"></span>
       <span>$/point <input id="pv" type="number" value="${S.pointVal || ''}" placeholder="${d && d.pointLow ? d.pointLow : 'auto'}" style="width:70px"></span>
       <span>$/happy <input id="hv" type="number" value="${S.happyVal}" style="width:60px"></span>
+      <span title="Average sale price of the HRG random property">$/property <input id="prv" type="number" value="${S.propVal}" style="width:100px"></span>
       <span class="muted">Blank = live price (energy from ${ENERGY_REF.item} ÷ ${ENERGY_REF.energy}). Untick a row to hide it and leave it out of the totals.</span></div>`;
     if (d) {
       const rows = BLOCKS.map((b, i) => ({ b, i, ...calc(b) }));
@@ -208,6 +202,7 @@
     on('#nv', 'onchange', (e) => { S.nerveVal = +e.target.value || 0; save(); render(); });
     on('#ev', 'onchange', (e) => { S.energyVal = +e.target.value || null; save(); render(); });
     on('#pv', 'onchange', (e) => { S.pointVal = +e.target.value || null; save(); render(); });
+    on('#prv', 'onchange', (e) => { S.propVal = +e.target.value || 0; save(); render(); });
     on('#hv', 'onchange', (e) => { S.happyVal = +e.target.value || 0; save(); render(); });
     on('#all', 'onclick', () => { S.off = {}; save(); render(); });
     on('#none', 'onclick', () => { BLOCKS.forEach((b, i) => { S.off[i] = true; }); S.showHidden = true; save(); render(); });
