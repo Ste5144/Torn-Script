@@ -8,7 +8,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 |---|---|---|---|
 | Archer Mining Co Advisor | Company page (`companies.php`) | Limited | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-mining-advisor.user.js) |
 | Flip Tracker | Item Market and Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-flip-tracker.user.js) |
-| Stock Payout Calculator | Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js) |
+| Stock Payout Calculator | Stock Market | Limited (reads your holdings; Public works with a fixed list) | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js) |
 | Archer Console | Any Torn page; badges on the Auction House | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-console.user.js) |
 | Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
 | High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
@@ -51,6 +51,7 @@ A panel on the Item Market and Stock Market pages (green **Flip tracker** button
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0 | 8 Nov 2026 | Funding table uses the holdings the Stock Payout Calculator detected. |
 | 1.1.4 | 8 Nov 2026 | PTS removed (sold). |
 | 1.1.3 | 8 Nov 2026 | Funding table matches holdings at 8 Nov (HRG added, sold blocks removed). |
 | 1.1.2 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
@@ -65,10 +66,11 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 - Choose a period from 7 days to 12 months; every figure recalculates.
 - Item payouts are valued at the live lowest listing or market value, optionally less the 5% tax. Points use the points market; energy uses the cheapest Red Cow ÷ 25; nerve and happiness use values you set.
 - Shows block value, value per payout, payouts in the period, income, yield per year, what the sale money would earn at your chosen alternative return, and a Keep or Sell candidate verdict.
-- Click a column heading to sort. Untick a row to hide it and leave it out of the totals; **Show hidden** brings unticked rows back so you can tick them again; **Tick all** and **Untick all** reset the selection. Edit `BLOCKS` at the top of the script if your holdings change.
+- Click a column heading to sort. Untick a row to hide it and leave it out of the totals; **Show hidden** brings unticked rows back so you can tick them again; **Tick all** and **Untick all** reset the selection. With a Limited key it reads your holdings and builds the block list itself; with a Public key it uses the fixed `BLOCKS` list at the top of the script. The Flip Tracker's funding table uses the same detected holdings.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3.0 | 8 Nov 2026 | Detects your holdings from the API with a Limited key (falls back to the fixed list). Hidden rows keyed by block, not row number. |
 | 1.2.1 | 8 Nov 2026 | PTS removed (sold). |
 | 1.2.0 | 8 Nov 2026 | Blocks match holdings at 8 Nov (HRG added, sold blocks removed); $/property input for HRG. Hidden-row ticks reset. |
 | 1.1.0 | 7 Nov 2026 | Unticked rows hide; Show hidden, Tick all and Untick all. |
@@ -96,6 +98,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 | 1.4.1 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.4.0 | 8 Nov 2026 | Auction badges need 5 comparable sales and only grade in the last hour; badge text no longer misread as listing data. |
 | 1.3.x | 8 Nov 2026 | mug's guide damage rule and bonus tier tags; price bands from all comparables equally; bonus % read correctly from the page. |
+| 1.3.0 | 8 Nov 2026 | Detects your holdings from the API with a Limited key (falls back to the fixed list). Hidden rows keyed by block, not row number. |
 | 1.2.1 | 8 Nov 2026 | PTS removed (sold). |
 | 1.2.0 | 8 Nov 2026 | Auction House badges. |
 | 1.1.x | 8 Nov 2026 | Item market deal grades; text contrast fixed. |

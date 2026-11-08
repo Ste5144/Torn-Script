@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.1.4
+// @version      1.2.0
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -52,6 +52,28 @@
     'Casino Pass':              { hi: 17300000, hiDate: 'Aug-Sep 26', lo: 9500000, loDate: 'Nov 25', ref: 15500000, yago: 10000000 }
   };
 
+  // Use the holdings the Stock Payout Calculator detected (same browser), else the fixed BLOCKS list.
+  function getBlocks() {
+    try {
+      const st = JSON.parse(localStorage.getItem('stockPayoutCalc.v3')) || {};
+      const d = st.data || {}, list = d.blocks;
+      if (!list || !list.length) return BLOCKS;
+      const rc = d.prices && d.prices['Can of Red Cow'];
+      const ePer = st.energyVal || (rc ? (rc.low || rc.mv) / 25 : 0);
+      return list.map((b) => {
+        const base = { acr: b.acr, blk: b.blk, shares: b.shares, days: b.days };
+        if (b.kind === 'cash') return { ...base, cash: b.amount };
+        if (b.kind === 'item') return { ...base, payout: b.item };
+        const v = b.kind === 'property' ? (st.propVal || 5000000)
+          : b.kind === 'nerve' ? b.qty * (st.nerveVal || 5000)
+          : b.kind === 'happy' ? b.qty * (st.happyVal || 0)
+          : b.kind === 'points' ? b.qty * (st.pointVal || d.pointLow || 0)
+          : b.kind === 'energy' ? b.qty * ePer : 0;
+        return { ...base, payout: b.kind, valueOverride: v, note: b.kind === 'unknown' ? b.label : '' };
+      });
+    } catch (e) { return BLOCKS; }
+  }
+
   const MARKET_FEE = 0.05;   // item market sales tax; set 0 if you sell via bazaar/trade
   const STOCK_FEE = 0.001;   // stock sale fee (check current)
   const LS_KEY = 'flipTracker.v1';
@@ -101,7 +123,7 @@
     }
     // payout item values for blocks (may not be on watchlist)
     const payoutMv = {};
-    BLOCKS.forEach((b) => { if (b.payout && byName[b.payout]) payoutMv[b.payout] = byName[b.payout].mv; });
+    getBlocks().forEach((b) => { if (b.payout && byName[b.payout]) payoutMv[b.payout] = byName[b.payout].mv; });
 
     S.snaps.push({ t: Date.now(), prices, stockPx, payoutMv });
     if (S.snaps.length > 400) S.snaps = S.snaps.slice(-400);
@@ -163,7 +185,7 @@
     if (snap) {
       const missing = WATCHLIST.filter((n) => !snap.prices[n]);
       // Funding table
-      const bs = BLOCKS.map((b) => ({ b, ...blockStats(b, snap) })).sort((x, y) => (x.yld ?? 9) - (y.yld ?? 9));
+      const bs = getBlocks().map((b) => ({ b, ...blockStats(b, snap) })).sort((x, y) => (x.yld ?? 9) - (y.yld ?? 9));
       h += `<div class="sec"><h3>Funding sources (cheapest to give up first)</h3>
         <table><tr><th>Block</th><th>Value now</th><th>Payout</th><th>Yield/yr</th><th>Item must rise</th><th>Note</th></tr>`;
       bs.forEach(({ b, value, per, yld, need }) => {

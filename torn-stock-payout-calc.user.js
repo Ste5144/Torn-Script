@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.2.1
-// @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Read-only API calls with a Public key. No game actions.
+// @version      1.3.0
+// @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Detects your holdings from the API (Limited key) or falls back to a fixed list. Read-only API calls. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
 // @homepageURL  https://github.com/Ste5144/Torn-Script
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  // ---------- CONFIG: your benefit blocks (edit shares if your holdings change) ----------
+  // ---------- CONFIG: fallback blocks, used only if your holdings can't be read (needs a Limited key) ----------
   // shares = shares in THAT block only. kind: item (payout item name), cash, energy, nerve, points, happy.
   const BLOCKS = [
     { acr: 'SYM', blk: 1, shares: 500000,   kind: 'item', item: 'Drug Pack', days: 7 },
@@ -31,7 +31,7 @@
   ];
   const HORIZONS = [[7, '7 days'], [14, '14 days'], [30, '1 month'], [61, '2 months'], [91, '3 months'], [182, '6 months'], [273, '9 months'], [365, '12 months']];
   const ENERGY_REF = { item: 'Can of Red Cow', energy: 25 }; // default $/energy = cheapest Red Cow / 25
-  const LS = 'stockPayoutCalc.v2';
+  const LS = 'stockPayoutCalc.v3';
 
   // ---------- STATE ----------
   const load = () => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } };
@@ -41,7 +41,7 @@
     nerveVal: 5000, energyVal: null, happyVal: 0, propVal: 5000000, pointVal: null, data: null, off: {}, showHidden: false
   }, load());
   // reuse the flip tracker's key if this one is blank
-  if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('stockPayoutCalc.v1')) || {}).key || (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
+  if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('stockPayoutCalc.v2')) || {}).key || (JSON.parse(localStorage.getItem('stockPayoutCalc.v1')) || {}).key || (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
 
   const $ = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const $m = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + (Math.abs(n) / 1e6).toFixed(Math.abs(n) >= 1e8 ? 0 : 1) + 'm';
@@ -54,6 +54,44 @@
     return j;
   }
 
+  // ---------- HOLDINGS DETECTION ----------
+  function findItem(name, byName) {
+    if (byName[name]) return name;
+    const tries = [name.replace(/s$/, ''), name.replace(/es$/, ''), name.replace(/ies$/, 'y')];
+    for (const t of tries) if (byName[t]) return t;
+    const lc = name.toLowerCase();
+    return Object.keys(byName).find((k) => k.toLowerCase() === lc || k.toLowerCase() === lc.replace(/s$/, '')) || null;
+  }
+  function parseBenefit(desc, byName) {
+    const d = String(desc || '').trim();
+    let m;
+    if ((m = d.match(/^\$\s*([\d,]+)/))) return { kind: 'cash', amount: +m[1].replace(/,/g, '') };
+    if ((m = d.match(/([\d,]+)\s*points?/i))) return { kind: 'points', qty: +m[1].replace(/,/g, '') };
+    if ((m = d.match(/([\d,]+)\s*energy/i))) return { kind: 'energy', qty: +m[1].replace(/,/g, '') };
+    if ((m = d.match(/([\d,]+)\s*nerve/i))) return { kind: 'nerve', qty: +m[1].replace(/,/g, '') };
+    if ((m = d.match(/([\d,]+)\s*happ/i))) return { kind: 'happy', qty: +m[1].replace(/,/g, '') };
+    if (/property/i.test(d)) return { kind: 'property' };
+    const name = d.replace(/^\d+\s*x\s*/i, '').trim();
+    const item = findItem(name, byName);
+    return item ? { kind: 'item', item } : { kind: 'unknown', label: d };
+  }
+  // Active (paying) blocks you hold: block n needs requirement x 2^(n-1) more shares (Stocks 3.0).
+  function buildBlocks(userStocks, tornStocks, byName) {
+    const out = [];
+    for (const u of Object.values(userStocks || {})) {
+      const t = tornStocks[u.stock_id];
+      if (!t || !t.benefit || t.benefit.type !== 'active') continue;
+      const req = t.benefit.requirement, held = u.total_shares || 0;
+      if (!req || held < req) continue;
+      const n = Math.floor(Math.log2(held / req + 1) + 1e-9);
+      const pb = parseBenefit(t.benefit.description, byName);
+      for (let k = 1; k <= n; k++) out.push({ acr: t.acronym, blk: k, shares: req * Math.pow(2, k - 1), days: t.benefit.frequency, ...pb });
+    }
+    return out.sort((a, b) => a.acr.localeCompare(b.acr) || a.blk - b.blk);
+  }
+  const blocks = () => (S.data && S.data.blocks && S.data.blocks.length ? S.data.blocks : BLOCKS);
+  const keyOf = (b) => b.acr + '#' + b.blk;
+
   // ---------- DATA ----------
   async function refresh(status) {
     status('Loading items…');
@@ -65,7 +103,15 @@
     const px = {};
     Object.values(stocks).forEach((s) => { px[s.acronym] = s.current_price; });
 
-    const names = [...new Set(BLOCKS.filter((b) => b.kind === 'item').map((b) => b.item).concat(ENERGY_REF.item))];
+    let detected = null, detectNote = '';
+    try {
+      status('Reading your holdings…');
+      const us = (await api('https://api.torn.com/user/?selections=stocks')).stocks || {};
+      detected = buildBlocks(us, stocks, byName);
+      detectNote = 'Holdings from API: ' + detected.length + ' paying blocks';
+    } catch (e) { detectNote = 'Fixed list in use (' + e.message + '; a Limited key reads holdings)'; }
+    const list = detected && detected.length ? detected : BLOCKS;
+    const names = [...new Set(list.filter((b) => b.kind === 'item').map((b) => b.item).concat(ENERGY_REF.item))];
     const prices = {}, missing = [];
     for (let i = 0; i < names.length; i++) {
       const n = names[i];
@@ -87,7 +133,7 @@
       const c = Object.values(pm).map((x) => x.cost).filter((x) => x > 0);
       if (c.length) pointLow = Math.min(...c);
     } catch (e) {}
-    S.data = { t: Date.now(), px, prices, pointLow, missing };
+    S.data = { t: Date.now(), px, prices, pointLow, missing, blocks: detected, detectNote };
     save();
     status('Updated ' + new Date().toLocaleString());
   }
@@ -117,6 +163,7 @@
     } else if (b.kind === 'points') { const v = pointVal(); per = v ? v * b.qty : null; basis = b.qty + ' points @ ' + $(v); }
     else if (b.kind === 'energy') { const v = energyVal(); per = v ? v * b.qty : null; basis = b.qty + ' energy @ ' + $(v) + '/E'; }
     else if (b.kind === 'nerve') { per = S.nerveVal * b.qty; basis = b.qty + ' nerve @ ' + $(S.nerveVal) + '/N'; }
+    else if (b.kind === 'unknown') { basis = b.label + ' (no price)'; }
     else if (b.kind === 'property') { per = S.propVal; basis = 'property @ ' + $m(S.propVal); }
     else if (b.kind === 'happy') { per = S.happyVal * b.qty; basis = b.qty + ' happy @ ' + $(S.happyVal) + '/H'; }
     const payouts = S.days / b.days;
@@ -151,15 +198,15 @@
     const d = S.data;
     const hOpts = HORIZONS.map(([v, l]) => `<option value="${v}" ${+S.days === v ? 'selected' : ''}>${l}</option>`).join('');
     let h = `<div class="bar"><b>Stock payouts</b>
-      <span>Key <input id="k" type="password" value="${S.key}" style="width:110px" placeholder="Public key"></span>
+      <span>Key <input id="k" type="password" value="${S.key}" style="width:110px" placeholder="Limited key"></span>
       <span>Period <select id="h">${hOpts}</select></span>
       <span title="What you could earn on the sale money elsewhere, per year. 0 = cash sits idle.">Alt return <input id="a" type="number" value="${S.altRate}" style="width:50px">%/yr</span>
       <span>Price <select id="pm"><option value="low" ${S.priceMode === 'low' ? 'selected' : ''}>Lowest listing</option><option value="mv" ${S.priceMode === 'mv' ? 'selected' : ''}>Market value</option></select></span>
       <label><input id="t" type="checkbox" ${S.sellItems ? 'checked' : ''}> less 5% tax</label>
       <button id="all">Tick all</button><button id="none">Untick all</button>
-      <label title="Show unticked rows so you can tick them again"><input id="sh" type="checkbox" ${S.showHidden ? 'checked' : ''}> Show hidden (${Object.values(S.off).filter(Boolean).length})</label>
+      <label title="Show unticked rows so you can tick them again"><input id="sh" type="checkbox" ${S.showHidden ? 'checked' : ''}> Show hidden (${blocks().filter((b) => S.off[keyOf(b)]).length})</label>
       <button id="r">Refresh prices</button><button id="x">Close</button>
-      <span class="muted" id="st">${msg || (d ? 'Prices ' + new Date(d.t).toLocaleString() : 'Press Refresh prices')}</span></div>
+      <span class="muted" id="st">${msg || (d ? 'Prices ' + new Date(d.t).toLocaleString() + (d.detectNote ? ' · ' + d.detectNote : '') : 'Press Refresh prices')}</span></div>
       <div class="bar" style="top:auto;position:static">
       <span>$/nerve <input id="nv" type="number" value="${S.nerveVal}" style="width:70px"></span>
       <span>$/energy <input id="ev" type="number" value="${S.energyVal || ''}" placeholder="${energyVal() ? Math.round(energyVal()) : 'auto'}" style="width:80px"></span>
@@ -168,7 +215,7 @@
       <span title="Average sale price of the HRG random property">$/property <input id="prv" type="number" value="${S.propVal}" style="width:100px"></span>
       <span class="muted">Blank = live price (energy from ${ENERGY_REF.item} ÷ ${ENERGY_REF.energy}). Untick a row to hide it and leave it out of the totals.</span></div>`;
     if (d) {
-      const rows = BLOCKS.map((b, i) => ({ b, i, ...calc(b) }));
+      const rows = blocks().map((b) => ({ b, i: keyOf(b), ...calc(b) }));
       rows.sort((x, y) => sortKey === 'acr' ? (x.b.acr + x.b.blk).localeCompare(y.b.acr + y.b.blk) * sortDir : ((x[sortKey] ?? -1e18) - (y[sortKey] ?? -1e18)) * sortDir);
       const label = HORIZONS.find(([v]) => v === +S.days)[1];
       let tv = 0, ti = 0, ta = 0;
@@ -185,7 +232,7 @@
           <td>${$m(value)}</td><td>${$m(per)}</td><td>${payouts.toFixed(1)}</td><td>${$m(income)}</td><td>${pct(yld)}</td><td>${$m(alt)}</td>
           <td class="${edge > 0 ? 'up' : edge < 0 ? 'dn' : ''}">${$m(edge)}</td><td>${verdict}</td></tr>`;
       });
-      h += `<tr><td></td><td><b>Total (${BLOCKS.length - Object.values(S.off).filter(Boolean).length} ticked)</b></td><td></td><td><b>${$m(tv)}</b></td><td></td><td></td><td><b>${$m(ti)}</b></td><td><b>${pct(tv ? ti / tv * 365 / S.days : null)}</b></td><td><b>${$m(ta)}</b></td><td><b>${$m(ti - ta)}</b></td><td></td></tr></table>
+      h += `<tr><td></td><td><b>Total (${blocks().filter((b) => !S.off[keyOf(b)]).length} ticked)</b></td><td></td><td><b>${$m(tv)}</b></td><td></td><td></td><td><b>${$m(ti)}</b></td><td><b>${pct(tv ? ti / tv * 365 / S.days : null)}</b></td><td><b>${$m(ta)}</b></td><td><b>${$m(ti - ta)}</b></td><td></td></tr></table>
         <div class="muted" style="margin-top:6px">Income = per-payout value × (period ÷ payout interval), pro-rata. Cash blocks pay every 31 days, so short periods may see 0 or 1 actual payout.
         "Sale money earns" = block value × alt return over the period, less the 0.1% sale fee. Selling resets the benefit timer and rebuying later is at the then share price.
         ${d.missing.length ? '<br><span class="dn">Item not found: ' + d.missing.join(', ') + '</span>' : ''}</div></div>`;
@@ -204,7 +251,7 @@
     on('#prv', 'onchange', (e) => { S.propVal = +e.target.value || 0; save(); render(); });
     on('#hv', 'onchange', (e) => { S.happyVal = +e.target.value || 0; save(); render(); });
     on('#all', 'onclick', () => { S.off = {}; save(); render(); });
-    on('#none', 'onclick', () => { BLOCKS.forEach((b, i) => { S.off[i] = true; }); S.showHidden = true; save(); render(); });
+    on('#none', 'onclick', () => { blocks().forEach((b) => { S.off[keyOf(b)] = true; }); S.showHidden = true; save(); render(); });
     on('#sh', 'onchange', (e) => { S.showHidden = e.target.checked; save(); render(); });
     P.querySelectorAll('input[data-i]').forEach((c) => c.onchange = (e) => { S.off[e.target.dataset.i] = !e.target.checked; save(); render(); });
     P.querySelectorAll('th[data-s]').forEach((th) => th.onclick = () => {
