@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.5.0
+// @version      1.6.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.6.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -41,7 +41,9 @@
     gapMs: 1000,       // spacing between API calls
     minComps: 5,       // comparable sales needed before a deal is graded
     gradeWithinMin: 60, // auctions are graded only when ending within this many minutes
-    dmgPerPt: 2.26,    // % more damage per weapon damage point (mug's guide: 10 points ≈ 25%)
+    dmgPerPt: 2.26,
+    bunkerUnlocked: false, // Big Al's Bunker unlocked (2,500 points)
+    marketFee: 5,      // % fee when selling a cache on the item market    // % more damage per weapon damage point (mug's guide: 10 points ≈ 25%)
     myTypes: 'PST, RFL',
   };
   let S = load();
@@ -361,6 +363,67 @@
     await kvSet('items', { ts: Date.now(), list: ITEMS });
   }
   const itemByName = (name) => ITEMS.find((i) => norm(i.name) === norm(name)) || null;
+
+  // ================= Big Al's Bunker trade-in floor =================
+  // Ranked-war weapons and armour trade in for Bunker Bucks (BB); BB buy caches.
+  // $ per BB = best (cache lowest listing × (1 − fee) ÷ cache BB cost). Floor = item BB × $ per BB.
+  const BB_BASE = { rifle: 10, shotgun: 10, pistol: 4, smg: 4, clubbing: 6, piercing: 6, slashing: 6, machinegun: 14, heavyartillery: 14, armor: 12 };
+  const BB_MULT = { yellow: [1, 1], orange: [3, 4.5], red: [9, 13.5] }; // [one bonus, two bonuses]; armour has no two-bonus value
+  const CACHES = [['Small Arms Cache', 20], ['Melee Cache', 30], ['Medium Arms Cache', 50], ['Armor Cache', 60], ['Heavy Arms Cache', 70]];
+  let BUNKER = null; // {ts, perBB, best, list:[{name, id, price, net, bb, perBB}]}
+  function inferRarity(b) {
+    let ci = 0;
+    (b || []).forEach((x) => {
+      const g = GUIDE[norm(x.t)];
+      if (!g) return;
+      for (let i = 3; i >= 1; i--) if (g[i] && x.v >= g[i][0]) { ci = Math.max(ci, i); break; }
+    });
+    return ['', 'yellow', 'orange', 'red'][ci] || null;
+  }
+  function bunkerBB(item) { // item: {name, type?, sub?, rarity, b}
+    if (!item || !(item.b || []).length) return 0; // only cache (bonus) items trade in
+    const it = itemByName(item.name) || {};
+    const type = item.type || it.type;
+    const sub = norm(type === 'Armor' ? 'armor' : item.sub || it.sub || '');
+    const base = BB_BASE[sub];
+    if (!base) return 0;
+    const rar = item.rarity || inferRarity(item.b);
+    const m = BB_MULT[rar];
+    if (!m) return 0;
+    const two = sub !== 'armor' && (item.b || []).length >= 2;
+    return base * (two ? m[1] : m[0]);
+  }
+  function bunkerFloor(item) {
+    const bb = bunkerBB(item);
+    if (!bb || !BUNKER || !BUNKER.perBB) return { bb, floor: NaN };
+    return { bb, floor: bb * BUNKER.perBB };
+  }
+  async function loadBunker(force) {
+    if (!BUNKER) { try { BUNKER = (await kvGet('bunker')) || null; } catch (e) { /* ignore */ } }
+    if (!force && BUNKER && Date.now() - BUNKER.ts < 6 * 3600e3) return BUNKER;
+    if (!/^[A-Za-z0-9]{16}$/.test(S.key)) return BUNKER;
+    let ids = await kvGet('cacheids');
+    if (!ids || !ids.length) {
+      const j = await api('torn/items', { cat: 'All' });
+      ids = (j.items || []).filter((i) => CACHES.some(([n]) => norm(n) === norm(i.name))).map((i) => ({ id: i.id, name: i.name }));
+      await kvSet('cacheids', ids);
+    }
+    const list = [];
+    for (const [name, bb] of CACHES) {
+      const c = ids.find((x) => norm(x.name) === norm(name));
+      if (!c) continue;
+      const j = await api('market/' + c.id + '/itemmarket', { limit: 5 });
+      const L = (j.itemmarket && j.itemmarket.listings) || [];
+      const price = L.length ? Math.min(...L.map((x) => x.price)) : (j.itemmarket && j.itemmarket.item && j.itemmarket.item.average_price) || NaN;
+      const net = price * (1 - (S.marketFee || 0) / 100);
+      list.push({ name, id: c.id, price, net, bb, perBB: net / bb });
+    }
+    const best = list.filter((x) => isFinite(x.perBB)).sort((a, b) => b.perBB - a.perBB)[0];
+    BUNKER = { ts: Date.now(), perBB: best ? best.perBB : NaN, best: best ? best.name : '', list };
+    await kvSet('bunker', BUNKER);
+    return BUNKER;
+  }
+  const floorText = (f) => (f.bb ? (isFinite(f.floor) ? `${money(f.floor)} (${f.bb} BB)` : `${f.bb} BB`) : '');
 
   // ================= Valuation from comparables =================
   function wQuantile(pairs, q) { // pairs [{v,w}]
@@ -771,14 +834,16 @@
         <div><small>Fair price</small><b class="g-gd">${money(v.p50)}</b></div>
         <div><small>Ceiling bid</small><b class="g-fr">${money(v.p75)}</b></div>
         <div><small>Comparables</small><b>${v.n}</b> <span class="muted">of ${v.pool}</span></div>
+        ${(() => { const f = bunkerFloor(t); return f.bb ? `<div><small>Bunker trade-in floor</small><b>${floorText(f)}</b></div>` : ''; })()}
       </div>${thin}${t.b.length ? '<div class="hint">Guide: ' + t.b.map((x) => esc(x.t) + ' ' + esc(guideNote(x.t, x.v, t.rarity))).join('; ') + '</div>' : ''}
       <div class="tblwrap"><table><thead><tr><th>Closest sales</th><th>Rarity</th><th class="num">Dmg</th><th class="num">Acc</th><th>Bonuses</th><th class="num">Price</th><th>When</th></tr></thead><tbody>
       ${v.comps.map((s) => `<tr><td>${esc(s.name)}</td><td>${rarityCell(s.rarity)}</td><td class="num">${fmt(s.dmg, 2)}</td><td class="num">${fmt(s.acc, 2)}</td><td>${bonusCell(s.b, s.rarity)}</td><td class="num"><b>${money(s.price)}</b></td><td class="muted">${ago(s.ts)}</td></tr>`).join('')}
       </tbody></table></div></div>`;
   }
-  function renderValue() {
+  async function renderValue() {
     const t = targetFrom(vf);
     if (!t.name) return;
+    try { await loadBunker(); } catch (e) { /* ignore */ }
     $('#v-out').innerHTML = valueCard(t, valuate(t));
   }
 
@@ -854,6 +919,7 @@
       } catch (e) { status(e.message); }
     };
     loadImported().then(renderImport);
+    loadBunker().then(renderImport).catch(() => {});
   }
   function renderImport() {
     if (!$('#i-tbl')) return;
@@ -863,7 +929,7 @@
       const seen = SEEN[wKey(r)];
       const price = seen && seen.ts > (r.importedAt || 0) - 6 * 3600e3 ? seen.price : r.price;
       const v = valuate({ name: r.name, rarity: r.rarity, b: r.b, dmg: r.dmg, acc: r.acc });
-      return Object.assign({}, r, { price, seenTs: seen ? seen.ts : null, idx: indexOf(r.dmg, r.b), mult: multOf(r.b), v, deal: dealOf(price, v) });
+      return Object.assign({}, r, { price, seenTs: seen ? seen.ts : null, idx: indexOf(r.dmg, r.b), mult: multOf(r.b), v, deal: dealOf(price, v), fl: bunkerFloor(r) });
     });
     const cols = [
       { h: 'Item', v: (r) => r.name },
@@ -876,6 +942,7 @@
       { h: 'Fair', v: (r) => r.v.p50, num: 1 },
       { h: 'Ceiling', v: (r) => r.v.p75, num: 1 },
       { h: 'Comps', v: (r) => r.v.n, num: 1 },
+      { h: 'Bunker floor', v: (r) => r.fl.floor, num: 1 },
       { h: 'Bid', v: (r) => r.price, num: 1 },
       { h: 'Deal', v: (r) => (isFinite(r.deal.pct) ? -r.deal.pct : -1e9), num: 1 },
       { h: 'Seller', v: (r) => r.seller },
@@ -885,7 +952,8 @@
       <td>${bonusCell(r.b, r.rarity)}</td><td class="num">${fmt(r.mult, 2)}</td><td class="num"><b>${fmt(r.idx, 1)}</b></td>
       <td class="num g-gd">${r.v.n ? money(r.v.p50) : '<span class="muted">–</span>'}</td><td class="num g-fr">${r.v.n ? money(r.v.p75) : '<span class="muted">–</span>'}</td>
       <td class="num">${r.v.n || '<span class="muted">0</span>'}</td>
-      <td class="num">${isFinite(r.price) ? money(r.price) + (r.seenTs ? ' <span class="muted">(' + ago(r.seenTs / 1000) + ')</span>' : '') : '<span class="muted">view on AH</span>'}</td>
+      <td class="num">${r.fl.bb ? floorText(r.fl) : '<span class="muted">–</span>'}</td>
+      <td class="num ${isFinite(r.price) && isFinite(r.fl.floor) && r.price < r.fl.floor ? 'g-ex' : ''}">${isFinite(r.price) ? money(r.price) + (r.seenTs ? ' <span class="muted">(' + ago(r.seenTs / 1000) + ')</span>' : '') : '<span class="muted">view on AH</span>'}</td>
       <td class="num ${r.deal.cls}">${r.deal.k ? '<b>' + esc(r.deal.label) + '</b>' : '<span class="muted">' + (r.deal.thin ? 'few sales' : '–') + '</span>'}</td>
       <td>${esc(r.seller)}</td><td>${isFinite(r.endsAt) ? leftText(r.endsAt) : esc(r.ends)}</td></tr>`);
   }
@@ -946,6 +1014,7 @@
     if (MARKET.length) renderMarket();
   }
   function renderMarket() {
+    if (!BUNKER) loadBunker().then(() => { if ($('#m-tbl')) renderMarket(); }).catch(() => {});
     const rows = MARKET.map((r) => {
       const idx = r.type === 'Armor' ? r.arm : indexOf(r.dmg, r.b);
       return Object.assign({}, r, { idx, vpd: idx / r.price });
@@ -959,6 +1028,7 @@
         (o.price < r.price || (o.dmg || 0) > (r.dmg || 0) || (o.acc || 0) > (r.acc || 0) || bsum(o) > bsum(r)));
       r.v = valuate({ name: r.name, rarity: r.rarity, b: r.b, dmg: r.dmg, acc: r.acc, arm: r.arm });
       r.deal = dealOf(r.price, r.v);
+      r.fl = bunkerFloor(r);
     });
     const shown = mf.dealsOnly ? rows.filter((r) => r.deal.k === 'great' || r.deal.k === 'good') : rows;
     status(`${rows.length} listings; ${rows.filter((r) => r.deal.k === 'great').length} great deals, ${rows.filter((r) => r.deal.k === 'good').length} good.`);
@@ -977,12 +1047,14 @@
       { h: 'Value', v: (r) => r.value, num: 1, def: 1 },
       { h: 'Auction fair', v: (r) => r.v.p50, num: 1 },
       { h: 'Deal', v: (r) => (isFinite(r.deal.pct) ? -r.deal.pct : -1e9), num: 1 },
+      { h: 'Bunker floor', v: (r) => r.fl.floor, num: 1 },
     ];
     sortable($('#m-tbl'), shown, cols, 'mkt', (r) => `<tr class="${r.deal.k ? 'deal-' + r.deal.k : ''}"><td class="star">${r.star ? '★' : ''}</td><td>${esc(r.name)}</td><td class="num"><b>${money(r.price)}</b></td>
       <td>${rarityCell(r.rarity)}</td><td class="num">${fmt(r.q, 1)}</td><td class="num">${fmt(r.dmg, 2)}</td><td class="num">${fmt(r.acc, 2)}</td><td class="num">${fmt(r.arm, 2)}</td>
       <td>${bonusCell(r.b, r.rarity)}</td><td class="num">${fmt(r.idx, 1)}</td><td class="num ${grade(r.value)}"><b>${fmt(r.value)}</b></td>
       <td class="num">${r.v.n ? money(r.v.p50) + ' <span class="muted">(' + r.v.n + ')</span>' : '<span class="muted">–</span>'}</td>
-      <td class="num ${r.deal.cls}"><b>${esc(r.deal.label)}</b>${isFinite(r.deal.pct) ? ' <span class="muted">' + (r.deal.pct > 0 ? '+' : '') + fmt(r.deal.pct) + '%</span>' : ''}</td></tr>`);
+      <td class="num ${r.deal.cls}"><b>${esc(r.deal.label)}</b>${isFinite(r.deal.pct) ? ' <span class="muted">' + (r.deal.pct > 0 ? '+' : '') + fmt(r.deal.pct) + '%</span>' : ''}</td>
+      <td class="num ${isFinite(r.fl.floor) && r.price < r.fl.floor ? 'g-ex' : ''}">${r.fl.bb ? floorText(r.fl) + (isFinite(r.fl.floor) && r.price < r.fl.floor ? ' <b>under floor</b>' : '') : '<span class="muted">–</span>'}</td></tr>`);
   }
 
   // ---------- Ranking ----------
@@ -1061,6 +1133,10 @@
           <label>Gap between calls (ms)<input id="s-gap" type="number" value="${S.gapMs}" min="650"></label>
           <label>My weapon types<input id="s-types" value="${esc(S.myTypes)}"></label>
         </div>
+        <div class="row"><label class="chk"><input type="checkbox" id="s-bunk" ${S.bunkerUnlocked ? 'checked' : ''}> Big Al's Bunker unlocked</label>
+          <label>Item market fee %<input id="s-fee" type="number" step="0.5" value="${S.marketFee}"></label>
+          <button class="b2" id="s-bunkref">Refresh cache prices</button></div>
+        <div class="hint" id="s-bunkinfo"></div>
         <div class="row"><button class="b" id="s-save">Save</button><button class="b2" id="s-items">Reload item list</button><button class="b2" id="s-clear">Clear sales cache</button></div>
         <div class="muted">Cache: ${fmt(SALES.length)} sales, ${fmt(ITEMS.length)} items.</div>
       </div>`;
@@ -1068,9 +1144,19 @@
       const k = $('#s-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { status('Key should be 16 letters and numbers.'); return; }
       S.key = k; S.armour = +$('#s-arm').value || 0; S.critChance = +$('#s-cc').value || 0; S.critMult = +$('#s-cm').value || 1;
-      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value;
+      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0);
       save(); status('Saved.');
     };
+    const bunkInfo = () => {
+      const el = $('#s-bunkinfo'); if (!el) return;
+      el.innerHTML = !BUNKER ? 'Cache prices not loaded yet (needs your Public key).' :
+        `Bunker Bucks valued at <b>${money(BUNKER.perBB)}</b> per BB (best: ${esc(BUNKER.best)}, ${ago(BUNKER.ts / 1000)}). ` +
+        BUNKER.list.map((c) => `${esc(c.name)} ${money(c.price)} ÷ ${c.bb} BB = ${money(c.perBB)}`).join(' · ') +
+        `. Trade-in BB: rifle/shotgun 10, pistol/SMG 4, melee 6, MG/HA 14, armour 12; ×3 orange (×4.5 two bonuses), ×9 red (×13.5). ${S.bunkerUnlocked ? '' : 'Unlocking the Bunker costs 2,500 points.'}`;
+    };
+    loadBunker().then(bunkInfo).catch(() => bunkInfo());
+    bunkInfo();
+    $('#s-bunkref').onclick = async () => { try { await loadBunker(true); bunkInfo(); status('Cache prices refreshed.'); } catch (e) { status(e.message); } };
     $('#s-items').onclick = async () => { try { await loadItems(true); status(`${ITEMS.length} items loaded.`); viewSettings(m); } catch (e) { status(e.message); } };
     $('#s-clear').onclick = async () => { await clearSales(); SALES = []; status('Sales cache cleared.'); viewSettings(m); };
   }
@@ -1203,16 +1289,20 @@
     const src = d.src === 'api' ? '' : ' <span class="m">(stats read from page)</span>';
     const idx = d.type === 'Armor' || (!isFinite(d.dmg) && isFinite(d.arm)) ? '' : ` · Index <b>${fmt(indexOf(d.dmg, d.b), 1)}</b>`;
     const bon = (d.b || []).map((x) => { const n = guideNote(x.t, x.v, d.rarity); return esc(x.t) + ' ' + esc(x.v) + '%' + (n ? ' [' + esc(n) + ']' : ''); }).join(', ') || 'no bonus';
+    const fl = bunkerFloor(Object.assign({}, d, { rarity: d.rarity }));
+    const under = fl.bb && isFinite(fl.floor) && isFinite(price) && price < fl.floor;
+    const flTxt = fl.bb ? ` · Bunker floor <b>${floorText(fl)}</b>${under ? ' <b>(bid under trade-in value)</b>' : ''}${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}` : '';
+    if (under && S.bunkerUnlocked) li.classList.add('ac-hl-good');
     const hrs = isFinite(left) ? (left >= 3600 ? Math.floor(left / 3600) + 'h ' + Math.floor((left % 3600) / 60) + 'm' : Math.floor(left / 60) + 'm') : '?';
     if (!v.n) {
-      box.innerHTML = `<b>No auction history cached</b> for ${esc(d.name)} (${bon})${idx}${src} <button data-f="1">Fetch history</button>`;
+      box.innerHTML = `<b>No auction history cached</b> for ${esc(d.name)} (${bon})${idx}${flTxt}${src} <button data-f="1">Fetch history</button>`;
     } else if (deal.thin) {
-      box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
+      box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
     } else if (deal.early) {
       const band = { great: 'still in great-buy range', good: 'still below fair', fair: 'above fair, below ceiling', over: 'already over ceiling' }[tone.slice(2)] || '';
-      box.innerHTML = `<b>Ends in ${hrs}: bid not final, ${band}.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
+      box.innerHTML = `<b>Ends in ${hrs}: bid not final, ${band}.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     } else {
-      box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
+      box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     }
     const btn = box.querySelector('button[data-f]');
     if (btn) btn.onclick = async (e) => {
@@ -1234,6 +1324,8 @@
     try {
       if (!SALES.length) { try { SALES = await dbAll('sales'); } catch (e) { /* ignore */ } }
       if (!ITEMS.length) { try { const c = await kvGet('items'); if (c) ITEMS = c.list; } catch (e) { /* ignore */ } }
+      if (!ITEMS.length && /^[A-Za-z0-9]{16}$/.test(S.key)) { try { await loadItems(); } catch (e) { /* ignore */ } }
+      try { await loadBunker(); } catch (e) { /* ignore */ }
       const lis = ahListings();
       for (const li of lis) {
         const id = li.id;
@@ -1289,5 +1381,5 @@
   if (document.body) boot(); else window.addEventListener('DOMContentLoaded', boot);
 
   // exposed for testing in Node (no effect in browser)
-  if (typeof module !== 'undefined') module.exports = { mergeImported, getImported: () => IMPORTED, ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
+  if (typeof module !== 'undefined') module.exports = { bunkerBB, setItems: (x) => { ITEMS = x; }, setBunker: (x) => { BUNKER = x; }, bunkerFloor, mergeImported, getImported: () => IMPORTED, ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
 })();
