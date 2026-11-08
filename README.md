@@ -9,6 +9,8 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Archer Mining Co Advisor | Company page (`companies.php`) | Limited | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-mining-advisor.user.js) |
 | Flip Tracker | Item Market and Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-flip-tracker.user.js) |
 | Stock Payout Calculator | Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js) |
+| Archer Console | Any Torn page; badges on the Auction House | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-console.user.js) |
+| Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
 
 ## Installing
 
@@ -66,3 +68,34 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 |---|---|---|
 | 1.1.0 | 7 Nov 2026 | Unticked rows hide; Show hidden, Tick all and Untick all. |
 | 1.0.1 | 7 Nov 2026 | First version, on GitHub with automatic updates. |
+
+## Archer Console
+
+A weapon and auction dashboard (purple **Archer Console** button, bottom left, or Alt+A) on any Torn page. Uses only the official Torn API with a Public key; nothing is sent anywhere else. Works in Torn PDA.
+
+- **Auction history**: completed auction sales (`market/{id}/auctionhouse`), cached in your browser, with Swervelord-style filters and summary prices.
+- **Ceiling bid**: enter an item's stats; the 15 closest past sales (same item and main bonus, weighted by bonus %, damage, accuracy, rarity and age) give Great (lower quarter), Fair (median) and Ceiling (upper quarter).
+- **Import live**: paste rows from the Swervelord live floor to rank them by index, with fair and ceiling prices.
+- **Item market**: live listings by weapon and bonus, value per dollar, a star for listings nothing else beats, and a Deal grade against auction history (Deals only filter).
+- **Ranking**: Index = 100 × damage factor × bonus multiplier (100 = a 70-damage weapon with no damage bonus). Damage compounds about 2.3% per point (mug's guide: 10 points ≈ 25%). Armour assumed to absorb 50% (guide: about 1% per armour point). Bonus tags show mug's damage tier and whether the roll is low or high for its colour.
+- **Mods**: weapon mod credit ranges with a price checker.
+- **Auction House badges** (`amarket.php`): each listing shows its current bid against comparable sales. A grade needs at least 5 comparable sales and is only given in the auction's last hour; earlier, the badge shows how high to bid. Great and Good listings get a green outline. Live auction stats are read from the page because the API does not serve live auctions.
+
+| Version | Date | Change |
+|---|---|---|
+| 1.4.1 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
+| 1.4.0 | 8 Nov 2026 | Auction badges need 5 comparable sales and only grade in the last hour; badge text no longer misread as listing data. |
+| 1.3.x | 8 Nov 2026 | mug's guide damage rule and bonus tier tags; price bands from all comparables equally; bonus % read correctly from the page. |
+| 1.2.0 | 8 Nov 2026 | Auction House badges. |
+| 1.1.x | 8 Nov 2026 | Item market deal grades; text contrast fixed. |
+| 1.0.0 | 8 Nov 2026 | First version. |
+
+## Mission Mod Checker
+
+Badges each weapon mod reward on the missions page with a grade against known credit ranges (special-offer and normal price), whether it fits your weapon types, its bonus, and the cash value of the credits at the page's median credit value. A panel (top right) has a manual checker and settings.
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0.3 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
+| 1.0.2 | 7 Nov 2026 | Runs on `page.php?sid=missions`; panel moved to the top right. |
+| 1.0.0 | 7 Nov 2026 | First version. |
