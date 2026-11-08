@@ -75,7 +75,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 - **Auction history**: completed auction sales (`market/{id}/auctionhouse`), cached in your browser, with Swervelord-style filters and summary prices.
 - **Ceiling bid**: enter an item's stats; the 15 closest past sales (same item and main bonus, weighted by bonus %, damage, accuracy, rarity and age) give Great (lower quarter), Fair (median) and Ceiling (upper quarter).
-- **Import live**: paste rows from the Swervelord live floor to rank them by index, with fair and ceiling prices.
+- **Import live**: paste rows from the Swervelord live floor; they are saved and merged with earlier pastes until each auction ends, ranked by index with fair and ceiling prices. Bids seen on Torn's Auction House page fill in the Bid column and a deal grade.
 - **Item market**: live listings by weapon and bonus, value per dollar, a star for listings nothing else beats, and a Deal grade against auction history (Deals only filter).
 - **Ranking**: Index = 100 × damage factor × bonus multiplier (100 = a 70-damage weapon with no damage bonus). Damage compounds about 2.3% per point (mug's guide: 10 points ≈ 25%). Armour assumed to absorb 50% (guide: about 1% per armour point). Bonus tags show mug's damage tier and whether the roll is low or high for its colour.
 - **Mods**: weapon mod credit ranges with a price checker.
@@ -83,6 +83,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 | Version | Date | Change |
 |---|---|---|
+| 1.5.0 | 8 Nov 2026 | Import live keeps a saved list: pastes merge (duplicates replaced), end times become countdowns, ended auctions drop off; current bids seen on the Auction House fill the Bid column so saved rows get a deal grade. |
 | 1.4.3 | 8 Nov 2026 | Auction badges coloured again: dashed colours for auctions not ending yet (by where the current bid sits), purple for too little history; solid colours and green outline still only in the last hour. |
 | 1.4.2 | 8 Nov 2026 | Bonus tier tags judge each bonus by its own roll, not the weapon's colour (a second bonus on an orange weapon can be a yellow roll). |
 | 1.4.1 | 8 Nov 2026 | Moved to GitHub with automatic updates. |

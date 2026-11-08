@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.4.3
+// @version      1.5.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.4.3';
+  const VERSION = '1.5.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -782,17 +782,69 @@
     $('#v-out').innerHTML = valueCard(t, valuate(t));
   }
 
-  // ---------- Import live (paste) ----------
+  // ---------- Import live (paste, saved) ----------
+  // Pasted rows are merged into a saved list (IndexedDB) and kept until their auction ends.
+  // Current bids seen on Torn's Auction House page fill the Price column when the weapon matches.
   let IMPORTED = [];
+  let SEEN = {}; // weapon key -> {price, ts, endsAt}  (from Auction House badges)
+  let importLoaded = false;
+  const wKey = (r) => [norm(r.name), isFinite(r.dmg) ? (+r.dmg).toFixed(2) : '', isFinite(r.acc) ? (+r.acc).toFixed(2) : ''].join('|');
+  const rowKey = (r) => wKey(r) + '|' + (r.b || []).map((x) => norm(x.t) + x.v).sort().join(',') + '|' + norm(r.seller);
+  function durSec(str) {
+    let sec = 0, any = false;
+    String(str || '').replace(/(\d+)\s*([dhms])/gi, (_, n, u) => { any = true; sec += +n * { d: 86400, h: 3600, m: 60, s: 1 }[u.toLowerCase()]; });
+    return any ? sec : NaN;
+  }
+  const leftText = (endsAt) => {
+    const s2 = Math.round((endsAt - Date.now()) / 1000);
+    if (!isFinite(s2)) return '?';
+    if (s2 <= 0) return 'ended';
+    const d = Math.floor(s2 / 86400), h = Math.floor((s2 % 86400) / 3600), mi = Math.floor((s2 % 3600) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${mi}m` : `${mi}m`;
+  };
+  async function loadImported() {
+    if (importLoaded) return;
+    try { IMPORTED = (await kvGet('imported')) || []; SEEN = (await kvGet('ahseen')) || {}; } catch (e) { /* ignore */ }
+    importLoaded = true;
+    pruneImported();
+  }
+  function pruneImported() {
+    const now = Date.now();
+    IMPORTED = IMPORTED.filter((r) => !isFinite(r.endsAt) || r.endsAt > now - 15 * 60000); // keep 15 min after end
+  }
+  async function saveImported() { try { await kvSet('imported', IMPORTED); } catch (e) { /* ignore */ } }
+  function mergeImported(rows) {
+    const now = Date.now();
+    let added = 0, updated = 0;
+    rows.forEach((r) => {
+      const sec = durSec(r.ends);
+      const rec = Object.assign({}, r, { importedAt: now, endsAt: isFinite(sec) ? now + sec * 1000 : NaN });
+      const k = rowKey(rec);
+      const i = IMPORTED.findIndex((x) => rowKey(x) === k);
+      if (i >= 0) { IMPORTED[i] = Object.assign({}, IMPORTED[i], rec); updated++; } else { IMPORTED.push(rec); added++; }
+    });
+    pruneImported();
+    return { added, updated };
+  }
   function viewImport(m) {
     m.innerHTML = `
       <div class="card">
-        <div class="hint">Live auctions are not in the Torn API. Copy rows from the Swervelord live floor (select the table, copy) and paste here. Each row gets an index and, where history is cached, a fair price and ceiling bid.</div>
-        <textarea id="i-txt" rows="6" style="width:100%" placeholder="Paste rows here"></textarea>
-        <div class="row" style="margin-top:6px"><button class="b" id="i-go">Parse and rank</button>
-        <button class="b2" id="i-fetch">Fetch history for these items</button><span class="muted" id="i-n"></span></div>
+        <div class="hint">Live auctions are not in the Torn API. Copy rows from the Swervelord live floor and paste them here; each paste is added to your saved list (duplicates replaced), kept until the auction ends. Price fills in from the current bid when you have viewed that auction on Torn's Auction House page.</div>
+        <textarea id="i-txt" rows="5" style="width:100%" placeholder="Paste rows here"></textarea>
+        <div class="row" style="margin-top:6px"><button class="b" id="i-go">Add to saved list</button>
+        <button class="b2" id="i-fetch">Fetch history for these items</button>
+        <button class="b2" id="i-clear">Clear saved list</button><span class="muted" id="i-n"></span></div>
       </div><div class="tblwrap"><table id="i-tbl"></table></div>`;
-    $('#i-go').onclick = () => { IMPORTED = parsePaste($('#i-txt').value); renderImport(); };
+    $('#i-go').onclick = async () => {
+      await loadImported();
+      const rows = parsePaste($('#i-txt').value);
+      const r = mergeImported(rows);
+      await saveImported();
+      $('#i-txt').value = '';
+      status(`${rows.length} rows read: ${r.added} added, ${r.updated} updated. ${IMPORTED.length} saved.`);
+      renderImport();
+    };
+    $('#i-clear').onclick = async () => { IMPORTED = []; await saveImported(); renderImport(); status('Saved list cleared.'); };
     $('#i-fetch').onclick = async () => {
       try {
         if (!ITEMS.length) { status('Loading item list…'); await loadItems(); }
@@ -801,13 +853,17 @@
         status(`History fetched for ${names.length} items.`); renderImport();
       } catch (e) { status(e.message); }
     };
-    if (IMPORTED.length) renderImport();
+    loadImported().then(renderImport);
   }
   function renderImport() {
-    $('#i-n').textContent = `${IMPORTED.length} rows`;
+    if (!$('#i-tbl')) return;
+    pruneImported();
+    $('#i-n').textContent = `${IMPORTED.length} saved`;
     const rows = IMPORTED.map((r) => {
+      const seen = SEEN[wKey(r)];
+      const price = seen && seen.ts > (r.importedAt || 0) - 6 * 3600e3 ? seen.price : r.price;
       const v = valuate({ name: r.name, rarity: r.rarity, b: r.b, dmg: r.dmg, acc: r.acc });
-      return Object.assign({}, r, { idx: indexOf(r.dmg, r.b), mult: multOf(r.b), v, deal: dealOf(r.price, v) });
+      return Object.assign({}, r, { price, seenTs: seen ? seen.ts : null, idx: indexOf(r.dmg, r.b), mult: multOf(r.b), v, deal: dealOf(price, v) });
     });
     const cols = [
       { h: 'Item', v: (r) => r.name },
@@ -820,18 +876,20 @@
       { h: 'Fair', v: (r) => r.v.p50, num: 1 },
       { h: 'Ceiling', v: (r) => r.v.p75, num: 1 },
       { h: 'Comps', v: (r) => r.v.n, num: 1 },
-      { h: 'Price', v: (r) => r.price, num: 1 },
+      { h: 'Bid', v: (r) => r.price, num: 1 },
       { h: 'Deal', v: (r) => (isFinite(r.deal.pct) ? -r.deal.pct : -1e9), num: 1 },
       { h: 'Seller', v: (r) => r.seller },
-      { h: 'Ends', v: (r) => r.ends },
+      { h: 'Ends in', v: (r) => (isFinite(r.endsAt) ? r.endsAt : 9e15) },
     ];
     sortable($('#i-tbl'), rows, cols, 'imp', (r) => `<tr class="${r.deal.k ? 'deal-' + r.deal.k : ''}"><td>${esc(r.name)}</td><td>${rarityCell(r.rarity)}</td><td class="num">${fmt(r.dmg, 2)}</td><td class="num">${fmt(r.acc, 2)}</td>
       <td>${bonusCell(r.b, r.rarity)}</td><td class="num">${fmt(r.mult, 2)}</td><td class="num"><b>${fmt(r.idx, 1)}</b></td>
       <td class="num g-gd">${r.v.n ? money(r.v.p50) : '<span class="muted">–</span>'}</td><td class="num g-fr">${r.v.n ? money(r.v.p75) : '<span class="muted">–</span>'}</td>
-      <td class="num">${r.v.n || '<span class="muted">0</span>'}</td><td class="num">${money(r.price)}</td>
-      <td class="num ${r.deal.cls}">${r.deal.k ? '<b>' + esc(r.deal.label) + '</b>' : '<span class="muted">–</span>'}</td>
-      <td>${esc(r.seller)}</td><td>${esc(r.ends)}</td></tr>`);
+      <td class="num">${r.v.n || '<span class="muted">0</span>'}</td>
+      <td class="num">${isFinite(r.price) ? money(r.price) + (r.seenTs ? ' <span class="muted">(' + ago(r.seenTs / 1000) + ')</span>' : '') : '<span class="muted">view on AH</span>'}</td>
+      <td class="num ${r.deal.cls}">${r.deal.k ? '<b>' + esc(r.deal.label) + '</b>' : '<span class="muted">' + (r.deal.thin ? 'few sales' : '–') + '</span>'}</td>
+      <td>${esc(r.seller)}</td><td>${isFinite(r.endsAt) ? leftText(r.endsAt) : esc(r.ends)}</td></tr>`);
   }
+
 
   // ---------- Item market finder ----------
   const mf = { items: 'ArmaLite M-15A4, SIG 552, Tavor TAR-21, Enfield SA-80', bonus: '', pages: 2, dealsOnly: false };
@@ -1116,8 +1174,20 @@
       return { itemId: it.id, name: it.name, rarity: (it.rarity || '').toLowerCase() || null, q: st.quality, dmg: st.damage, acc: st.accuracy, arm: st.armor, b: (it.bonuses || []).map((x) => ({ t: x.title, v: x.value })) };
     } catch (e) { return null; }
   }
+  let seenTimer = null;
+  function recordSeen(d, price, left) {
+    if (!d || !d.name || !isFinite(price)) return;
+    SEEN[wKey(d)] = { price, ts: Date.now(), endsAt: isFinite(left) ? Date.now() + left * 1000 : NaN };
+    clearTimeout(seenTimer);
+    seenTimer = setTimeout(async () => {
+      const now = Date.now();
+      Object.keys(SEEN).forEach((k) => { if (now - SEEN[k].ts > 3 * 864e5) delete SEEN[k]; });
+      try { const old = (await kvGet('ahseen')) || {}; await kvSet('ahseen', Object.assign(old, SEEN)); } catch (e) { /* ignore */ }
+    }, 1500);
+  }
   function ahBadge(li, d, price) {
     const left = ahTimeLeft(li);
+    recordSeen(d, price, left);
     let box = li.querySelector(':scope > .ac-ah');
     if (!box) { box = document.createElement('div'); box.className = 'ac-ah'; li.appendChild(box); }
     const t = { name: d.name, rarity: d.rarity, b: d.b, dmg: d.dmg, acc: d.acc, arm: d.arm };
@@ -1219,5 +1289,5 @@
   if (document.body) boot(); else window.addEventListener('DOMContentLoaded', boot);
 
   // exposed for testing in Node (no effect in browser)
-  if (typeof module !== 'undefined') module.exports = { ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
+  if (typeof module !== 'undefined') module.exports = { mergeImported, getImported: () => IMPORTED, ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
 })();
