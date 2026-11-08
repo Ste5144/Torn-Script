@@ -51,6 +51,7 @@ A panel on the Item Market and Stock Market pages (green **Flip tracker** button
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.2 | 8 Nov 2026 | Version number shown in the panel title and button tooltip. |
 | 1.2.1 | 8 Nov 2026 | Amounts show b for billions and m for millions. |
 | 1.2.0 | 8 Nov 2026 | Funding table uses the holdings the Stock Payout Calculator detected. |
 | 1.1.4 | 8 Nov 2026 | PTS removed (sold). |
@@ -71,6 +72,7 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3.2 | 8 Nov 2026 | Version number shown in the panel title and button tooltip. |
 | 1.3.1 | 8 Nov 2026 | Amounts show b for billions, m for millions, k for thousands. |
 | 1.3.0 | 8 Nov 2026 | Detects your holdings from the API with a Limited key (falls back to the fixed list). Hidden rows keyed by block, not row number. |
 | 1.2.1 | 8 Nov 2026 | PTS removed (sold). |

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.2.1
+// @version      1.2.2
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -13,6 +13,7 @@
 
 (function () {
   'use strict';
+  const VERSION = '1.2.2'; // keep in step with @version
 
   // ---------- CONFIG (edit freely) ----------
   // Items to track. Names must match Torn item names exactly; unmatched names are listed in the panel.
@@ -176,14 +177,14 @@
   #ftp input{background:#111;color:#ddd;border:1px solid #444;padding:2px 4px;width:90px}#ftp button{background:#333;color:#eee;border:1px solid #555;padding:3px 8px;cursor:pointer;border-radius:3px}
   #ftp .sec{padding:0 8px 8px}#ftb{position:fixed;left:10px;bottom:10px;z-index:99998;background:#2a5;color:#fff;border:0;border-radius:4px;padding:6px 10px;cursor:pointer;font:12px Arial}`;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
-  const btn = document.createElement('button'); btn.id = 'ftb'; btn.textContent = 'Flip tracker'; document.body.appendChild(btn);
+  const btn = document.createElement('button'); btn.id = 'ftb'; btn.textContent = 'Flip tracker'; btn.title = 'v' + VERSION; document.body.appendChild(btn);
   const P = document.createElement('div'); P.id = 'ftp'; document.body.appendChild(P);
   btn.onclick = () => { P.style.display = 'block'; btn.style.display = 'none'; render(); };
 
   function render(msg) {
     const snap = last();
     let h = `<div class="bar">
-      <b style="color:#fff">Flip tracker</b>
+      <b style="color:#fff">Flip tracker</b> <span class="muted">v${VERSION}</span>
       <span>Public key: <input id="ftk" type="password" value="${S.key}" placeholder="Public/Minimal"></span>
       <span>Hold (months): <input id="ftm" type="number" min="1" max="12" value="${S.months}" style="width:45px"></span>
       <button id="ftr">Snapshot now</button><button id="ftc">Copy CSV</button><button id="ftx">Close</button>

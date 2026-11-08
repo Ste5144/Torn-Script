@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.3.1
+// @version      1.3.2
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Detects your holdings from the API (Limited key) or falls back to a fixed list. Read-only API calls. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
@@ -12,6 +12,7 @@
 
 (function () {
   'use strict';
+  const VERSION = '1.3.2'; // keep in step with @version
 
   // ---------- CONFIG: fallback blocks, used only if your holdings can't be read (needs a Limited key) ----------
   // shares = shares in THAT block only. kind: item (payout item name), cash, energy, nerve, points, happy.
@@ -197,7 +198,7 @@
   #spc .sec{padding:8px}#spc tr.off td{opacity:.35}
   #spcb{position:fixed;left:10px;bottom:52px;z-index:99998;background:#2a6fb0;color:#fff;border:0;border-radius:4px;padding:6px 10px;cursor:pointer;font:12px Arial}`;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
-  const btn = document.createElement('button'); btn.id = 'spcb'; btn.textContent = 'Stock payouts'; document.body.appendChild(btn);
+  const btn = document.createElement('button'); btn.id = 'spcb'; btn.textContent = 'Stock payouts'; btn.title = 'v' + VERSION; document.body.appendChild(btn);
   const P = document.createElement('div'); P.id = 'spc'; document.body.appendChild(P);
   btn.onclick = () => { P.style.display = 'block'; btn.style.display = 'none'; render(); };
   let sortKey = 'yld', sortDir = 1;
@@ -205,7 +206,7 @@
   function render(msg) {
     const d = S.data;
     const hOpts = HORIZONS.map(([v, l]) => `<option value="${v}" ${+S.days === v ? 'selected' : ''}>${l}</option>`).join('');
-    let h = `<div class="bar"><b>Stock payouts</b>
+    let h = `<div class="bar"><b>Stock payouts</b> <span class="muted">v${VERSION}</span>
       <span>Key <input id="k" type="password" value="${S.key}" style="width:110px" placeholder="Limited key"></span>
       <span>Period <select id="h">${hOpts}</select></span>
       <span title="What you could earn on the sale money elsewhere, per year. 0 = cash sits idle.">Alt return <input id="a" type="number" value="${S.altRate}" style="width:50px">%/yr</span>
