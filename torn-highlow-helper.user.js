@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn High-Low Helper (display only)
 // @namespace    sterlingarcher.torn
-// @version      6.2.0
+// @version      6.2.1
 // @description  Tracks dealer and player cards through the deck, shows Higher/Lower odds from the cards left, advises Collect vs Continue, and logs outcomes to CSV. Display only: no clicks, no extra server requests.
 // @match        https://www.torn.com/*highlow*
 // @grant        none
@@ -31,7 +31,7 @@
 
   ASSUMPTIONS STILL TO CONFIRM
   - One 52-card deck per game; reshuffle detected automatically if a 5th card of a rank appears.
-  - Tie handling is a setting (loss / push), default loss.
+  - A draw is a push: the game continues and the pot is unchanged (Torn, confirmed 8 Nov 2026).
 */
 
 (function () {
@@ -52,7 +52,7 @@
     lastSig: '',
     mod: 25,
     limit: 0,
-    ties: 'loss',
+    ties: 'push',      // Torn: a draw does not end the game (confirmed 8 Nov 2026)
     log: [],
     // Outcome log (kept in this browser, exported as CSV)
     rounds: [],
@@ -78,7 +78,7 @@
       if (logged.has(g)) return;
       const rs = byGame[id];
       const last = rs[rs.length - 1];
-      const lost = last.result === 'lose' || (last.result === 'tie' && state.ties === 'loss');
+      const lost = last.result === 'lose';
       state.games.push({
         time: last.time, game: g, mod: last.mod, rounds: rs.length,
         wins: rs.filter(x => x.result === 'win').length,
@@ -105,7 +105,6 @@
     if (typeof s.track === 'boolean') state.track = s.track;
     if (typeof s.mod === 'number') state.mod = s.mod;
     if (typeof s.limit === 'number') state.limit = s.limit;
-    if (s.ties === 'push' || s.ties === 'loss') state.ties = s.ties;
   } catch (e) { /* storage blocked: defaults */ }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify({ track: state.track, mod: state.mod, limit: state.limit, ties: state.ties })); } catch (e) { /* ignore */ }
@@ -175,7 +174,8 @@
     logLine((role === 'dealer' ? 'dealer ' : 'yours  ') + label(r));
     state.undoGame = null;
     // A lost round ends the game: log it automatically.
-    if (result === 'lose' || (result === 'tie' && state.ties === 'loss')) {
+    // Only a wrong guess ends the game; a draw carries on with the same deck.
+    if (result === 'lose') {
       state.undoGame = { hist: state.hist.slice(), gameId: state.gameId };
       endGame('lost');
       flash('Lost round: game logged automatically.');
@@ -483,7 +483,7 @@
           <div class="row">
             <div><label>Chance mod %</label><input id="thl-mod" type="number" min="0" max="100" step="1"></div>
             <div><label>Min win % (0=off)</label><input id="thl-lim" type="number" min="0" max="100" step="1"></div>
-            <div><label>Ties</label><select id="thl-ties"><option value="loss">Lose</option><option value="push">Push</option></select></div>
+            <div><label>Draws</label><div style="font-size:11px;padding-top:3px">Push (game continues)</div></div>
           </div>
         </div>
         <div class="sec">
@@ -525,10 +525,8 @@
     const $ = id => p.querySelector('#' + id);
     $('thl-mod').value = state.mod;
     $('thl-lim').value = state.limit;
-    $('thl-ties').value = state.ties;
     $('thl-mod').oninput = e => { const v = Number(e.target.value); if (v >= 0 && v <= 100) { state.mod = v; save(); render(); } };
     $('thl-lim').oninput = e => { const v = Number(e.target.value); if (v >= 0 && v <= 100) { state.limit = v; save(); render(); } };
-    $('thl-ties').onchange = e => { state.ties = e.target.value; save(); render(); };
     $('thl-undo').onclick = () => {
       // Undo a mis-entered card that wrongly ended the game as lost.
       if (state.undoGame && !state.hist.length) {
