@@ -79,10 +79,11 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 - **Item market**: live listings by weapon and bonus, value per dollar, a star for listings nothing else beats, and a Deal grade against auction history (Deals only filter).
 - **Ranking**: Index = 100 × damage factor × bonus multiplier (100 = a 70-damage weapon with no damage bonus). Damage compounds about 2.3% per point (mug's guide: 10 points ≈ 25%). Armour assumed to absorb 50% (guide: about 1% per armour point). Bonus tags show mug's damage tier and whether the roll is low or high for its colour.
 - **Mods**: weapon mod credit ranges with a price checker.
-- **Auction House badges** (`amarket.php`): each listing shows its current bid against comparable sales. A grade needs at least 5 comparable sales and is only given in the auction's last hour; earlier, the badge shows how high to bid. Great and Good listings get a green outline. Live auction stats are read from the page because the API does not serve live auctions.
+- **Auction House badges** (`amarket.php`): each listing shows its current bid against comparable sales. A grade needs at least 5 comparable sales and is only given in the auction's last hour; earlier, the badge shows how high to bid. Great and Good listings get a green outline. Badge colours: solid = graded in the last hour; dashed teal/blue/amber/red = not ending yet, coloured by where the current bid sits (great-buy range, below fair, above fair, over ceiling); purple = too few comparable sales; grey = no history. Live auction stats are read from the page because the API does not serve live auctions.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4.3 | 8 Nov 2026 | Auction badges coloured again: dashed colours for auctions not ending yet (by where the current bid sits), purple for too little history; solid colours and green outline still only in the last hour. |
 | 1.4.2 | 8 Nov 2026 | Bonus tier tags judge each bonus by its own roll, not the weapon's colour (a second bonus on an orange weapon can be a yellow roll). |
 | 1.4.1 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.4.0 | 8 Nov 2026 | Auction badges need 5 comparable sales and only grade in the last hour; badge text no longer misread as listing data. |

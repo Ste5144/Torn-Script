@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.4.2
+// @version      1.4.3
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -932,7 +932,7 @@
   function viewRank(m) {
     m.innerHTML = `
       <div class="card">
-        <div class="hint">Index = 100 × damage factor × bonus multiplier; 100 = a 70-damage weapon with no scored bonus. Damage factor compounds ${S.dmgPerPt}% per damage point (mug's guide: 10 points ≈ 25%). Assumptions (change in Settings): armour absorbs ${S.armour}% of damage (guide: about 1% per armour point; Assault is rated 46 to 51), crit chance ${S.critChance}%, crits ${S.critMult}× normal. Blue tags on bonuses show the guide's damage tier; ↓ low roll, ↑ high roll for that colour. Scored bonuses: ${SCORED.join(', ')}; others count as 1.0. Weapon damage does not translate one-for-one into damage dealt, so use the index to rank, not to predict.</div>
+        <div class="hint">Index = 100 × damage factor × bonus multiplier; 100 = a 70-damage weapon with no scored bonus. Damage factor compounds ${S.dmgPerPt}% per damage point (mug's guide: 10 points ≈ 25%). Assumptions (change in Settings): armour absorbs ${S.armour}% of damage (guide: about 1% per armour point; Assault is rated 46 to 51), crit chance ${S.critChance}%, crits ${S.critMult}× normal. Blue tags on bonuses show the guide's damage tier; ↓ low roll, ↑ high roll for that colour. Auction House badges: solid green/amber/red = graded in the last hour (green outline on Great and Good); dashed teal/blue/amber/red = auction not ending yet, coloured by where the current bid sits; purple = too few comparable sales; grey = no history. Scored bonuses: ${SCORED.join(', ')}; others count as 1.0. Weapon damage does not translate one-for-one into damage dealt, so use the index to rank, not to predict.</div>
         <div class="row">
           <label>Weapon<input id="r-n" style="width:160px"></label>
           <label>Dmg<input id="r-d" type="number" step="0.01"></label>
@@ -1030,6 +1030,12 @@
     .ac-ah.good{background:#25301a;border-color:#8fd14f}
     .ac-ah.fair{background:#332b14;border-color:#e0b030}
     .ac-ah.over{background:#331616;border-color:#d04040}
+    .ac-ah.e-great{background:#10302b;border-color:#2fc4a8;border-style:dashed}
+    .ac-ah.e-good{background:#14282a;border-color:#6fb7c9;border-style:dashed}
+    .ac-ah.e-fair{background:#2e2914;border-color:#c9a53a;border-style:dashed}
+    .ac-ah.e-over{background:#2e1616;border-color:#c04848;border-style:dashed}
+    .ac-ah.thin{background:#24233a;border-color:#7a76b8}
+    .ac-ah.none{background:#2a2a2a;border-color:#666}
     li.ac-hl-great{outline:2px solid #3fbf3f !important;outline-offset:-2px}
     li.ac-hl-good{outline:2px solid #8fd14f !important;outline-offset:-2px}
     .ac-ah button{background:#444;color:#fff;border:1px solid #777;border-radius:4px;padding:1px 6px;cursor:pointer;font-size:11px;margin-left:4px}
@@ -1118,10 +1124,12 @@
     const v = valuate(t);
     let deal = dealOf(price, v);
     const early = isFinite(left) && left > (S.gradeWithinMin || 60) * 60;
-    if (early && deal.k) deal = Object.assign({}, deal, { early: true, k: '' });
+    let tone = '';
+    if (early && deal.k) { tone = 'e-' + deal.k; deal = Object.assign({}, deal, { early: true, k: '' }); }
     li.classList.remove('ac-hl-great', 'ac-hl-good');
     if (deal.k === 'great' || deal.k === 'good') li.classList.add('ac-hl-' + deal.k);
-    box.className = 'ac-ah ' + (deal.k || '');
+    if (!tone) tone = deal.k || (deal.thin ? 'thin' : 'none');
+    box.className = 'ac-ah ' + tone;
     const src = d.src === 'api' ? '' : ' <span class="m">(stats read from page)</span>';
     const idx = d.type === 'Armor' || (!isFinite(d.dmg) && isFinite(d.arm)) ? '' : ` · Index <b>${fmt(indexOf(d.dmg, d.b), 1)}</b>`;
     const bon = (d.b || []).map((x) => { const n = guideNote(x.t, x.v, d.rarity); return esc(x.t) + ' ' + esc(x.v) + '%' + (n ? ' [' + esc(n) + ']' : ''); }).join(', ') || 'no bonus';
@@ -1131,7 +1139,8 @@
     } else if (deal.thin) {
       box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
     } else if (deal.early) {
-      box.innerHTML = `<b>Ends in ${hrs}: bid not final.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
+      const band = { great: 'still in great-buy range', good: 'still below fair', fair: 'above fair, below ceiling', over: 'already over ceiling' }[tone.slice(2)] || '';
+      box.innerHTML = `<b>Ends in ${hrs}: bid not final, ${band}.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     } else {
       box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     }
