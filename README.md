@@ -11,6 +11,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Stock Payout Calculator | Stock Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js) |
 | Archer Console | Any Torn page; badges on the Auction House | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-console.user.js) |
 | Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
+| High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
 
 ## Installing
 
@@ -104,3 +105,21 @@ Badges each weapon mod reward on the missions page with a grade against known cr
 | 1.0.3 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.0.2 | 7 Nov 2026 | Runs on `page.php?sid=missions`; panel moved to the top right. |
 | 1.0.0 | 7 Nov 2026 | First version. |
+
+## High-Low Helper
+
+A panel on the casino's High-Low page that reads the dealer card and your card as they are dealt and tracks every card out of the deck. It never presses Higher, Lower or Cash In.
+
+- **Guess**: the best pick against the dealer card and its win chance, worked out from the cards still in the deck.
+- **Collect or continue**: after a win, the value of carrying on (averaged over every card the next dealer card could be) against banking the pot. At a 25% modifier this is about ×0.90, so it nearly always says collect.
+- **Chance modifier**: read from the page's "Current modifier" figure.
+- **Outcome log**: every round and game, exported as CSV. Losses end a game automatically; press **Collected** or **Took 50%** when you cash in. Enter your bet so each game shows a profit.
+- A game in progress survives a page reload or script update (for 30 minutes). **New game** picks up a dealer card already showing.
+
+| Version | Date | Change |
+|---|---|---|
+| 6.2.0 | 8 Nov 2026 | Moved to GitHub with automatic updates. Game in progress kept across reloads; New game reads the card on the table; chance modifier read from the page. |
+| 6.1.0 | 8 Nov 2026 | Reads cards correctly now Torn flips them between two faces (the hidden face can hold the previous card). |
+| 6.0.x | 11 Oct 2026 | Automatic card reading; records which button you pressed. |
+| 5.x | 11 Oct 2026 | Outcome log and CSV export. |
+| 1.0 to 4.0 | 11 Oct 2026 | First versions: odds, deck tracking, collect advice. |
