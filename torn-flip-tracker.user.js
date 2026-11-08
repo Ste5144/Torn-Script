@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.1.3
+// @version      1.1.4
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -36,7 +36,6 @@
     { acr: 'IOU', blk: 1, shares: 3000000,  cash: 12000000, days: 31 },
     { acr: 'GRN', blk: 1, shares: 500000,   cash: 4000000,  days: 31 },
     { acr: 'HRG', blk: 1, shares: 10000000, payout: 'property', valueOverride: 5000000, days: 31, note: 'Edit valueOverride to avg property sale' },
-    { acr: 'PTS', blk: 1, shares: 10000000, payout: '100 points', valueOverride: 4000000, days: 7, note: 'Needed for nerve refills' },
     { acr: 'PRN', blk: 1, shares: 1000000,  payout: 'Erotic DVD', days: 7 },
     { acr: 'FHG', blk: 1, shares: 2000000,  payout: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'SYM', blk: 1, shares: 500000,   payout: 'Drug Pack', days: 7 }

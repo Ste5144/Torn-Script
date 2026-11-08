@@ -51,6 +51,7 @@ A panel on the Item Market and Stock Market pages (green **Flip tracker** button
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.4 | 8 Nov 2026 | PTS removed (sold). |
 | 1.1.3 | 8 Nov 2026 | Funding table matches holdings at 8 Nov (HRG added, sold blocks removed). |
 | 1.1.2 | 7 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.1.1 | 6 Nov 2026 | Rockstar Rudolph and Erotic DVD baselines. |
@@ -68,6 +69,7 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.1 | 8 Nov 2026 | PTS removed (sold). |
 | 1.2.0 | 8 Nov 2026 | Blocks match holdings at 8 Nov (HRG added, sold blocks removed); $/property input for HRG. Hidden-row ticks reset. |
 | 1.1.0 | 7 Nov 2026 | Unticked rows hide; Show hidden, Tick all and Untick all. |
 | 1.0.1 | 7 Nov 2026 | First version, on GitHub with automatic updates. |
@@ -94,6 +96,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 | 1.4.1 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.4.0 | 8 Nov 2026 | Auction badges need 5 comparable sales and only grade in the last hour; badge text no longer misread as listing data. |
 | 1.3.x | 8 Nov 2026 | mug's guide damage rule and bonus tier tags; price bands from all comparables equally; bonus % read correctly from the page. |
+| 1.2.1 | 8 Nov 2026 | PTS removed (sold). |
 | 1.2.0 | 8 Nov 2026 | Auction House badges. |
 | 1.1.x | 8 Nov 2026 | Item market deal grades; text contrast fixed. |
 | 1.0.0 | 8 Nov 2026 | First version. |

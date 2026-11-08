@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.2.0
+// @version      1.2.1
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Read-only API calls with a Public key. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
 // @grant        none
@@ -27,7 +27,6 @@
     { acr: 'IOU', blk: 1, shares: 3000000,  kind: 'cash', amount: 12000000, days: 31 },
     { acr: 'TMI', blk: 1, shares: 6000000,  kind: 'cash', amount: 25000000, days: 31 },
     { acr: 'HRG', blk: 1, shares: 10000000, kind: 'property', days: 31, note: 'Set $/property to your average sale price' },
-    { acr: 'PTS', blk: 1, shares: 10000000, kind: 'points', qty: 100, days: 7, note: 'Used for nerve refills' },
     { acr: 'MCS', blk: 1, shares: 350000,   kind: 'energy', qty: 100, days: 7 }
   ];
   const HORIZONS = [[7, '7 days'], [14, '14 days'], [30, '1 month'], [61, '2 months'], [91, '3 months'], [182, '6 months'], [273, '9 months'], [365, '12 months']];
