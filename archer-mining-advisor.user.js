@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.0.2
+// @version      2.0.3
 // @description  Display-only company advisor for a Mining Corporation: staff allocation by total EE with Sales Executive and Secretary filled first, staff health, and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
@@ -132,7 +132,7 @@ function hungarian(c) {
   const get = (k, d) => { try { const v = GM_getValue(k); return v === undefined ? d : JSON.parse(v); } catch (e) { return d; } };
   const set = (k, v) => GM_setValue(k, JSON.stringify(v));
   const DEF = {
-    key: '', bonus: 0, weights: {}, locks: {}, lockRoles: ['site manager', 'safety inspector'], minGain: 10, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
+    key: '', bonus: 0, weights: {}, locks: {}, lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
     model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 0 },
     seedLog: [
       { label: '4-11 Oct', days: 8, price: 8500, ads: 7.5, sold: 9415, capped: true },
@@ -151,6 +151,8 @@ function hungarian(c) {
   const EARN = ['sales executive', 'secretary'];
   const DEF_W = { 'sales executive': 10, 'secretary': 10, 'site manager': 1, 'safety inspector': 1, 'mine engineer': 1, 'electrician': 1, 'production foreman': 1, 'mill operator': 0.1 };
   if (cfg.wv !== 3) { cfg.weights = Object.assign({}, DEF_W); cfg.lockRoles = DEF.lockRoles.slice(); cfg.minGain = DEF.minGain; cfg.wv = 3; set('cfg', cfg); }
+  // 2.0.3: a change must add 5+ EE to Sales + Secretary (weighted 50) before it is suggested; smaller gains are within estimate error.
+  if (!cfg.mg4) { cfg.minGain = Math.max(+cfg.minGain || 0, 50); cfg.mg4 = true; set('cfg', cfg); }
   const saveCfg = () => set('cfg', cfg);
   let snaps = get('snaps', {});   // reportDay -> { sold, made, price, ads, stock, mo, wages, income, customers }
   let eeHist = get('eeHist', {}); // reportDay -> { name: totalEE }
