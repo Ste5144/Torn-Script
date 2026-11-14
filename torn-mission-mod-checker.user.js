@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Mission Mod Checker
 // @namespace    sterlingarcher.torn
-// @version      1.0.3
+// @version      1.0.4
 // @description  Display only. Grades weapon mods in the mission rewards shop against known normal and special-offer credit ranges.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -112,9 +112,19 @@
     return v;
   };
 
+  // Torn's in-game names that differ from the sheet's names.
+  const byName = (n) => MODS.find((m) => m.name === n);
+  const ALIASES = [
+    // "Extra Magazine" = sheet's Extra Clip; two-magazine version = Extra Clip x2
+    [/(2x|x2|two|double)extramagazine|extramagazines|extramagazinex2/, 'Extra Clip x2'],
+    [/extramagazine/, 'Extra Clip x1'],
+    [/extendedmagazine/, 'Extended Mags'],
+    [/highcapacitymagazine/, 'High Capacity Mags'],
+  ];
   function matchMod(text) {
     const t = norm(text);
     if (!t) return null;
+    for (const [re, name] of ALIASES) if (re.test(t)) return byName(name);
     for (const { key, mod } of MOD_INDEX) if (t.includes(key)) return mod;
     return null;
   }
@@ -188,15 +198,19 @@
     return nums.length ? nums[0] : NaN;
   }
 
+  // Name text from the reward only. The script's own badge is removed first: it lists
+  // candidate mod names, and reading it back caused wrong matches (fixed in 1.0.4).
   function readNameText(cell) {
+    const c = cell.cloneNode(true);
+    c.querySelectorAll('.sa-mmc-badge').forEach((x) => x.remove());
     const bits = [];
-    cell.querySelectorAll('*').forEach((el) => {
+    c.querySelectorAll('*').forEach((el) => {
       ['alt', 'title', 'aria-label', 'data-title', 'data-name', 'data-item-name', 'src'].forEach((a) => {
         const v = el.getAttribute && el.getAttribute(a);
         if (v) bits.push(v);
       });
     });
-    bits.push(cell.textContent || '');
+    bits.push(c.textContent || '');
     return bits.join(' | ');
   }
 
@@ -279,7 +293,7 @@
       const text = readNameText(cell);
       const mod = matchMod(text);
       // Mods are untradeable, so the page shows no "Total value" for them
-      const noValue = !/total value/i.test(cell.textContent || '');
+      const noValue = !/total value/i.test(text);
       if (!mod && !noValue) return; // tradeable item, not a mod
 
       const sig = (mod ? mod.name : '?') + '|' + price + '|' + settings.myTypes + '|' + settings.creditValue;
@@ -303,7 +317,7 @@
     p.id = 'sa-mmc-panel';
     const opts = MODS.map((m, i) => `<option value="${i}">${m.type}: ${m.name}</option>`).join('');
     p.innerHTML = `
-      <div class="h" id="sa-mmc-toggle">Mod Checker v1.0.3 [–]</div>
+      <div class="h" id="sa-mmc-toggle">Mod Checker v1.0.4 [–]</div>
       <div id="sa-mmc-body">
         <label>Manual check: mod</label>
         <select id="sa-mmc-mod">${opts}</select>
@@ -346,7 +360,7 @@
     p.querySelector('#sa-mmc-toggle').addEventListener('click', (e) => {
       const hide = body.style.display !== 'none';
       body.style.display = hide ? 'none' : '';
-      e.target.textContent = 'Mod Checker v1.0.3 ' + (hide ? '[+]' : '[–]');
+      e.target.textContent = 'Mod Checker v1.0.4 ' + (hide ? '[+]' : '[–]');
     });
   }
 

@@ -115,6 +115,7 @@ Badges each weapon mod reward on the missions page with a grade against known cr
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.4 | 14 Nov 2026 | Recognises Torn's names "Extra Magazine" (sheet: Extra Clip), "Extended/High Capacity Magazine"; no longer reads its own badge text, which caused wrong names (e.g. Extra Magazine shown as Adjustable Trigger). |
 | 1.0.3 | 8 Nov 2026 | Moved to GitHub with automatic updates. |
 | 1.0.2 | 7 Nov 2026 | Runs on `page.php?sid=missions`; panel moved to the top right. |
 | 1.0.0 | 7 Nov 2026 | First version. |
