@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.6.0
+// @version      1.7.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -43,7 +43,10 @@
     gradeWithinMin: 60, // auctions are graded only when ending within this many minutes
     dmgPerPt: 2.26,
     bunkerUnlocked: false, // Big Al's Bunker unlocked (2,500 points)
-    marketFee: 5,      // % fee when selling a cache on the item market    // % more damage per weapon damage point (mug's guide: 10 points ≈ 25%)
+    marketFee: 5,      // % fee when selling a cache on the item market
+    resaleFee: 5,      // % fee assumed when reselling a weapon (item market tax is 5%; auction fee unconfirmed)
+    flipMargin: 10,    // % profit wanted on a resale or Bunker trade-in before a bid counts as cheap
+    resaleBasis: 'p50', // resale price: p50 = median of comparable sales, p25 = lower quarter (cautious)
     myTypes: 'PST, RFL',
   };
   let S = load();
@@ -422,6 +425,20 @@
     BUNKER = { ts: Date.now(), perBB: best ? best.perBB : NaN, best: best ? best.name : '', list };
     await kvSet('bunker', BUNKER);
     return BUNKER;
+  }
+  // Resale and Bunker profit at a given price. Returns max bids for the wanted margin.
+  function profitCheck(price, v, fl) {
+    const m = 1 + (S.flipMargin || 0) / 100;
+    const out = { resale: null, bunker: null };
+    if (v && v.n >= (S.minComps || 5)) {
+      const basis = S.resaleBasis === 'p25' ? v.p25 : v.p50;
+      const net = basis * (1 - (S.resaleFee || 0) / 100);
+      out.resale = { net, max: net / m, profit: net - price, pct: price > 0 ? (net - price) / price * 100 : NaN, ok: isFinite(price) && price <= net / m };
+    }
+    if (fl && fl.bb && isFinite(fl.floor)) {
+      out.bunker = { net: fl.floor, max: fl.floor / m, profit: fl.floor - price, pct: price > 0 ? (fl.floor - price) / price * 100 : NaN, ok: isFinite(price) && price <= fl.floor / m };
+    }
+    return out;
   }
   const floorText = (f) => (f.bb ? (isFinite(f.floor) ? `${money(f.floor)} (${f.bb} BB)` : `${f.bb} BB`) : '');
 
@@ -1134,7 +1151,10 @@
           <label>My weapon types<input id="s-types" value="${esc(S.myTypes)}"></label>
         </div>
         <div class="row"><label class="chk"><input type="checkbox" id="s-bunk" ${S.bunkerUnlocked ? 'checked' : ''}> Big Al's Bunker unlocked</label>
-          <label>Item market fee %<input id="s-fee" type="number" step="0.5" value="${S.marketFee}"></label>
+          <label>Cache sale fee %<input id="s-fee" type="number" step="0.5" value="${S.marketFee}"></label>
+          <label>Resale fee %<input id="s-rfee" type="number" step="0.5" value="${S.resaleFee}"></label>
+          <label>Profit wanted %<input id="s-margin" type="number" step="1" value="${S.flipMargin}"></label>
+          <label>Resale price<select id="s-basis"><option value="p50" ${S.resaleBasis !== 'p25' ? 'selected' : ''}>Median sale</option><option value="p25" ${S.resaleBasis === 'p25' ? 'selected' : ''}>Lower quarter (cautious)</option></select></label>
           <button class="b2" id="s-bunkref">Refresh cache prices</button></div>
         <div class="hint" id="s-bunkinfo"></div>
         <div class="row"><button class="b" id="s-save">Save</button><button class="b2" id="s-items">Reload item list</button><button class="b2" id="s-clear">Clear sales cache</button></div>
@@ -1144,7 +1164,7 @@
       const k = $('#s-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { status('Key should be 16 letters and numbers.'); return; }
       S.key = k; S.armour = +$('#s-arm').value || 0; S.critChance = +$('#s-cc').value || 0; S.critMult = +$('#s-cm').value || 1;
-      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0);
+      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0); S.resaleFee = Math.max(0, +$('#s-rfee').value || 0); S.flipMargin = Math.max(0, +$('#s-margin').value || 0); S.resaleBasis = $('#s-basis').value;
       save(); status('Saved.');
     };
     const bunkInfo = () => {
@@ -1182,6 +1202,10 @@
     .ac-ah.none{background:#2a2a2a;border-color:#666}
     li.ac-hl-great{outline:2px solid #3fbf3f !important;outline-offset:-2px}
     li.ac-hl-good{outline:2px solid #8fd14f !important;outline-offset:-2px}
+    li.ac-hl-flip{outline:3px solid #f2c94b !important;outline-offset:-3px}
+    .ac-ah .pf{margin-top:3px;padding-top:3px;border-top:1px solid #555}
+    .ac-ah .pf .y{color:#7dff9a !important;font-weight:bold}
+    .ac-ah .pf .n{color:#ff9a9a !important}
     .ac-ah button{background:#444;color:#fff;border:1px solid #777;border-radius:4px;padding:1px 6px;cursor:pointer;font-size:11px;margin-left:4px}
   `;
   function ahListings() {
@@ -1292,7 +1316,18 @@
     const fl = bunkerFloor(Object.assign({}, d, { rarity: d.rarity }));
     const under = fl.bb && isFinite(fl.floor) && isFinite(price) && price < fl.floor;
     const flTxt = fl.bb ? ` · Bunker floor <b>${floorText(fl)}</b>${under ? ' <b>(bid under trade-in value)</b>' : ''}${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}` : '';
-    if (under && S.bunkerUnlocked) li.classList.add('ac-hl-good');
+    const pc = profitCheck(price, v, fl);
+    const bunkerOk = pc.bunker && pc.bunker.ok && S.bunkerUnlocked;
+    li.classList.remove('ac-hl-flip');
+    if ((pc.resale && pc.resale.ok) || bunkerOk) li.classList.add('ac-hl-flip');
+    const pLine = (label, r, extra) => {
+      if (!r) return '';
+      const at = early ? 'at the current bid' : 'at this price';
+      return `<div>${label}: worth <b>${money(r.net)}</b>${extra} · ${r.ok ? `<span class="y">CHEAP: +${money(r.profit)} (+${fmt(r.pct)}%) ${at}</span>` : `<span class="n">${r.profit >= 0 ? '+' + money(r.profit) + ' (' + fmt(r.pct) + '%), under ' + S.flipMargin + '% margin' : 'loss ' + money(-r.profit)} ${at}</span>`} · max bid <b>${money(r.max)}</b> for ${S.flipMargin}% profit</div>`;
+    };
+    const pfHtml = (pc.resale || pc.bunker)
+      ? `<div class="pf">${pLine('Resell', pc.resale, ` (${S.resaleBasis === 'p25' ? 'lower-quarter' : 'median'} sale less ${S.resaleFee}% fee)`)}${pLine('Bunker Bucks', pc.bunker, ` (${fl.bb} BB; caches sold less ${S.marketFee}% fee)${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}`)}${early ? '<div class="m">Bid not final: it is only cheap if it finishes at or under the max bid.</div>' : ''}</div>`
+      : (v.n && v.n < (S.minComps || 5) ? `<div class="pf m">Resale: needs ${S.minComps} comparable sales to judge.</div>` : '');
     const hrs = isFinite(left) ? (left >= 3600 ? Math.floor(left / 3600) + 'h ' + Math.floor((left % 3600) / 60) + 'm' : Math.floor(left / 60) + 'm') : '?';
     if (!v.n) {
       box.innerHTML = `<b>No auction history cached</b> for ${esc(d.name)} (${bon})${idx}${flTxt}${src} <button data-f="1">Fetch history</button>`;
@@ -1304,6 +1339,7 @@
     } else {
       box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     }
+    if (pfHtml) box.insertAdjacentHTML('beforeend', pfHtml);
     const btn = box.querySelector('button[data-f]');
     if (btn) btn.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();
@@ -1381,5 +1417,5 @@
   if (document.body) boot(); else window.addEventListener('DOMContentLoaded', boot);
 
   // exposed for testing in Node (no effect in browser)
-  if (typeof module !== 'undefined') module.exports = { bunkerBB, setItems: (x) => { ITEMS = x; }, setBunker: (x) => { BUNKER = x; }, bunkerFloor, mergeImported, getImported: () => IMPORTED, ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
+  if (typeof module !== 'undefined') module.exports = { profitCheck, bunkerBB, setItems: (x) => { ITEMS = x; }, setBunker: (x) => { BUNKER = x; }, bunkerFloor, mergeImported, getImported: () => IMPORTED, ahTimeLeft, guideNote, ahFromDom, dealOf, bonusMult, indexOf, multOf, parsePaste, valuate, setSales: (s) => { SALES = s; }, S };
 })();
