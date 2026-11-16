@@ -144,7 +144,7 @@ A panel on the casino's High-Low page that reads the dealer card and your card a
 
 ## Quick Mail
 
-Adds a small mail icon (✉) after player names across Torn. Clicking it opens Torn's compose page for that player in a new tab; you write or paste the message and press **Send** yourself. Nothing is sent or filled in by the script.
+Adds a small mail icon (✉) after player names across Torn. Clicking it opens Torn's compose page for that player in a new tab and fills in the subject and message set at the top of the script (`SUBJECT`, `IMAGE_URL`, `FOOTER`). You check it and press **Send** yourself; the script never sends or clicks anything. Composing a mail any other way is left untouched.
 
 - **Grey** icon: not mailed from this browser. **Green**: mailed before; hover for the date.
 - **Shift+click** an icon to clear that player's mailed mark.
@@ -153,5 +153,6 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0 | 16 Nov 2026 | Pre-fills the subject and message (recruitment image) when you open compose from the icon. Falls back to copy buttons if the fields can't be found. |
 | 1.0.1 | 16 Nov 2026 | Icons also show on names drawn as honor bar images; avatars still skipped. |
 | 1.0.0 | 16 Nov 2026 | First version. |
