@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Quick Mail
 // @namespace    sterlingarcher.torn
-// @version      1.0.0
+// @version      1.0.1
 // @description  Display only. Adds a small mail icon next to player names that opens Torn's compose page for that player in a new tab. Remembers who you've mailed.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -29,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
 
   // Compose page address. {ID} is replaced with the player's ID.
   // If Torn changes it, copy the address of the "Send message" button on any profile and paste it here.
@@ -77,10 +77,25 @@
     }
   }
 
+  // Player name from the link text, or from an honor bar image's alt/title.
+  function playerName(a) {
+    const txt = a.textContent.trim();
+    if (txt) return txt.replace(/\s*\[\d+\]$/, '');
+    const img = a.querySelector('img[alt], img[title]');
+    const fromImg = img && (img.getAttribute('alt') || img.getAttribute('title') || '').trim();
+    return (fromImg || a.getAttribute('title') || '').replace(/\s*\[\d+\]$/, '');
+  }
+
   function shouldSkip(a) {
     if (a.hasAttribute(DONE_ATTR)) return true;
-    if (!a.textContent.trim()) return true; // image-only links (avatars, honor bars)
-    return SKIP_SELECTORS.some(sel => a.closest(sel));
+    if (SKIP_SELECTORS.some(sel => a.closest(sel))) return true;
+    // Skip avatar pictures (tall images); keep honor bars (short and wide).
+    const img = a.querySelector('img');
+    if (img && !a.textContent.trim()) {
+      const h = img.getBoundingClientRect().height || img.height;
+      if (h > 30) return true;
+    }
+    return false;
   }
 
   function decorate(root) {
@@ -91,7 +106,7 @@
       const m = a.href.match(/XID=(\d+)/);
       if (!m) return;
       const id = m[1];
-      const name = a.textContent.trim().replace(/\s*\[\d+\]$/, '');
+      const name = playerName(a) || `player ${id}`;
       a.setAttribute(DONE_ATTR, '1');
 
       const icon = document.createElement('a');
@@ -127,7 +142,7 @@
       const m = icon.href.match(/XID=(\d+)/);
       if (m && m[1] === id) {
         const link = icon.previousElementSibling;
-        const name = link ? link.textContent.trim() : id;
+        const name = (link && playerName(link)) || `player ${id}`;
         paint(icon, id, name, log);
       }
     });

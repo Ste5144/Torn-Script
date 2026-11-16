@@ -149,8 +149,9 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 - **Grey** icon: not mailed from this browser. **Green**: mailed before; hover for the date.
 - **Shift+click** an icon to clear that player's mailed mark.
 - The mailed log is stored in your browser only, so it doesn't carry across devices.
-- Icons are skipped in chat and on image-only links (avatars).
+- Icons are skipped in chat and on avatar pictures; names shown as honor bars get an icon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1 | 16 Nov 2026 | Icons also show on names drawn as honor bar images; avatars still skipped. |
 | 1.0.0 | 16 Nov 2026 | First version. |
