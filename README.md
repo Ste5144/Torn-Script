@@ -12,6 +12,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Archer Console | Any Torn page; badges on the Auction House | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-console.user.js) |
 | Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
 | High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
+| Quick Mail | Any Torn page with player names | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-quick-mail.user.js) |
 
 ## Installing
 
@@ -140,3 +141,16 @@ A panel on the casino's High-Low page that reads the dealer card and your card a
 | 6.0.x | 11 Oct 2026 | Automatic card reading; records which button you pressed. |
 | 5.x | 11 Oct 2026 | Outcome log and CSV export. |
 | 1.0 to 4.0 | 11 Oct 2026 | First versions: odds, deck tracking, collect advice. |
+
+## Quick Mail
+
+Adds a small mail icon (✉) after player names across Torn. Clicking it opens Torn's compose page for that player in a new tab; you write or paste the message and press **Send** yourself. Nothing is sent or filled in by the script.
+
+- **Grey** icon: not mailed from this browser. **Green**: mailed before; hover for the date.
+- **Shift+click** an icon to clear that player's mailed mark.
+- The mailed log is stored in your browser only, so it doesn't carry across devices.
+- Icons are skipped in chat and on image-only links (avatars).
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0.0 | 16 Nov 2026 | First version. |
