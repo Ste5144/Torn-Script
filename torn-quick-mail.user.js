@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Quick Mail
 // @namespace    sterlingarcher.torn
-// @version      1.1.0
+// @version      1.1.1
 // @description  Adds a mail icon next to player names that opens Torn's compose page and pre-fills your recruitment subject and message. You press Send yourself. Remembers who you've mailed.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -30,7 +30,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
 
   // Compose page address. {ID} is replaced with the player's ID.
   // If Torn changes it, copy the address of the "Send message" button on any profile and paste it here.
@@ -38,7 +38,8 @@
 
   // Pre-filled mail. Edit these to change the message.
   const SUBJECT = 'Quick Message from our sponsor: TWGSA  Wait!';
-  const IMAGE_URL = 'https://i.imgur.com/yl9Tnn4.png';
+  // Hosted on GitHub so players in countries that block Imgur (e.g. the UK) can still see it.
+  const IMAGE_URL = 'https://raw.githubusercontent.com/Ste5144/Torn-Script/main/images/archer-mining-recruitment-ad.png';
   // Optional line under the image, e.g. 'Apply here: https://www.torn.com/...'. Leave '' for none.
   const FOOTER = '';
 

@@ -153,6 +153,7 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.1 | 17 Nov 2026 | Recruitment image now hosted in this repo (`images/`) instead of Imgur, which is blocked in some countries. |
 | 1.1.0 | 16 Nov 2026 | Pre-fills the subject and message (recruitment image) when you open compose from the icon. Falls back to copy buttons if the fields can't be found. |
 | 1.0.1 | 16 Nov 2026 | Icons also show on names drawn as honor bar images; avatars still skipped. |
 | 1.0.0 | 16 Nov 2026 | First version. |
