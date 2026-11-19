@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.2.0
+// @version      2.2.1
 // @description  Display-only company advisor for a Mining Corporation: daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
@@ -246,7 +246,18 @@ function hungarian(c) {
     const mo = d.emps.filter(e => norm(e.position) === 'mill operator').length;
     const c = r => d.emps.filter(e => norm(e.position) === r).length;
     const wagesNow = d.emps.reduce((a, e) => a + e.wage, 0);
-    snaps[day] = Object.assign({}, snaps[day] || {}, { sold: d.sold, made: d.made, price: d.price, ads: d.ads, stock: d.inStock, mo, income: d.income, customers: d.customers,
+    // Torn's API reports no "created" figure (always 0). Work it out from the previous day's
+    // logged stock: made = stock today - stock yesterday + sold today.
+    let made = d.made;
+    if (!made) {
+      const pd = new Date(Date.parse(day + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
+      const prev = snaps[pd];
+      if (prev && prev.stock != null && d.inStock != null && d.sold != null) {
+        const est = d.inStock - prev.stock + d.sold;
+        if (est >= 0) made = est;
+      }
+    }
+    snaps[day] = Object.assign({}, snaps[day] || {}, { sold: d.sold, made, price: d.price, ads: d.ads, stock: d.inStock, mo, income: d.income, customers: d.customers,
       se: c('sales executive'), sec: c('secretary'), me: c('mine engineer'), emp: d.emps.length, env: d.environment,
       wages: wagesNow, profit: d.income != null ? d.income - wagesNow - d.ads * 1e6 : undefined, src: 'api' });
     // Pasted Torn records are authoritative for that day's results; keep them.
@@ -431,7 +442,7 @@ function hungarian(c) {
     const up = dayFor(p, { price: p.price + 125 });
     let h = `<div class="tiles">
       <div class="tile">Daily income (Torn)<b>${m$(data.income || 0)}</b><span class="mut">${t(data.customers)} customers</span></div>
-      <div class="tile">Sold / made (API)<b>${t(data.sold)} / ${t(data.made)} t</b><span class="mut">period not stated by Torn; check against the company page</span></div>
+      <div class="tile">Sold / made<b>${t(data.sold)} / ${(snaps[reportDay(data.ts)] || {}).made ? t(snaps[reportDay(data.ts)].made) : '?'} t</b><span class="mut">made = stock change + sold, from yesterday\'s logged stock</span></div>
       <div class="tile">Stock<b>${t(data.inStock)} t</b><span class="mut">price $${t(p.price)}, ads $${p.ads}m</span></div>
       <div class="tile">Model profit/day<b>${m$(withStock.profit)}</b><span class="mut">wages ${m$(p.wages)} + ads</span></div></div>
       <h3>Best guesses</h3>

@@ -37,6 +37,7 @@ Make role changes in small steps and check the next day's income before making m
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.1 | 19 Nov 2026 | Tonnes made now worked out from the API (stock today − stock yesterday + sold), because Torn reports 0 for it. Runway, Role mix and Results by setup no longer need pasted records to show production. |
 | 2.2.0 | 19 Nov 2026 | New **Briefing** tab (opens first): recommended next move from stock runway and the role-mix model (add a Sales Executive at 25+ days of stock, cut one under 10, otherwise hold), verdict on the last setup change after 3 logged days, results grouped by setup, daily cost jumps and staff paid above the wage formula (default 20x highest working stat, set in Settings). Paste Torn's Stock records and Company records to fill in history. |
 | 2.1.0 | 19 Nov 2026 | New **Role mix** tab: re-runs the allocation for 3 to 6 Sales Executives and shows tonnes made vs demand, income while stock lasts and steady income. Production now uses Mill Operator EE and the Mine Engineer instead of a flat 920 t per MO; demand rises with Sales Executive EE. Stock runway banner (days to empty or to the 40,000 t cap). New **Trains** tab: who gains most EE per company train. |
 | 2.0.3 | 11 Nov 2026 | Only suggests a change if it adds at least 5 EE to Sales Executive + Secretary (minimum gain 50 weighted); smaller gains are within estimate error. |
@@ -55,6 +56,7 @@ A panel on the Item Market and Stock Market pages (green **Flip tracker** button
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.3 | 19 Nov 2026 | Backup block list matches holdings at 19 Nov (TMI, PTS, MCS, CBD, THS, TCT added). |
 | 1.2.2 | 8 Nov 2026 | Version number shown in the panel title and button tooltip. |
 | 1.2.1 | 8 Nov 2026 | Amounts show b for billions and m for millions. |
 | 1.2.0 | 8 Nov 2026 | Funding table uses the holdings the Stock Payout Calculator detected. |
@@ -76,6 +78,7 @@ A panel on the Stock Market page (blue **Stock payouts** button, bottom left, ab
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4.0 | 19 Nov 2026 | Limited key stored in Tampermonkey instead of the page's storage, where other scripts on torn.com could read it (moved automatically; Torn PDA without Tampermonkey storage keeps the old behaviour). Backup block list matches holdings at 19 Nov. |
 | 1.3.2 | 8 Nov 2026 | Version number shown in the panel title and button tooltip. |
 | 1.3.1 | 8 Nov 2026 | Amounts show b for billions, m for millions, k for thousands. |
 | 1.3.0 | 8 Nov 2026 | Detects your holdings from the API with a Limited key (falls back to the fixed list). Hidden rows keyed by block, not row number. |

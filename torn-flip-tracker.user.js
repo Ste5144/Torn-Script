@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Flip Tracker (display only)
 // @namespace    sterlingarcher.flip
-// @version      1.2.2
+// @version      1.2.3
 // @description  Tracks prices of hold-and-flip items and compares them against the stock blocks you could sell to fund them. Read-only API calls with a Public/Minimal key. No game actions.
 // @match        https://www.torn.com/page.php?sid=ItemMarket*
 // @match        https://www.torn.com/page.php?sid=stocks*
@@ -13,7 +13,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '1.2.2'; // keep in step with @version
+  const VERSION = '1.2.3'; // keep in step with @version
 
   // ---------- CONFIG (edit freely) ----------
   // Items to track. Names must match Torn item names exactly; unmatched names are listed in the panel.
@@ -28,15 +28,21 @@
   // Stock blocks you could sell. shares = shares in THAT block only (incremental).
   // payout: an item name (valued at live market value), or cash: amount. days = payout interval.
   // valueOverride: $ per payout for non-tradeable benefits (nerve, happiness, points).
-  const BLOCKS = [
+  const BLOCKS = [ // holdings at 19 Nov 2026; used only if the Stock Payout Calculator hasn't read your holdings
     { acr: 'SYM', blk: 2, shares: 1000000,  payout: 'Drug Pack', days: 7 },
     { acr: 'FHG', blk: 2, shares: 4000000,  payout: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'PRN', blk: 2, shares: 2000000,  payout: 'Erotic DVD', days: 7 },
     { acr: 'MUN', blk: 1, shares: 5000000,  payout: 'Six-Pack of Energy Drink', days: 7 },
     { acr: 'TMI', blk: 1, shares: 6000000,  cash: 25000000, days: 31 },
+    { acr: 'PTS', blk: 1, shares: 10000000, payout: 'points', valueOverride: 3340000, days: 7, note: '100 points at approx. $33,400' },
     { acr: 'IOU', blk: 1, shares: 3000000,  cash: 12000000, days: 31 },
+    { acr: 'MCS', blk: 1, shares: 350000,   payout: 'energy', valueOverride: 8300000, days: 7, note: '100 energy at Red Cow / 25' },
     { acr: 'GRN', blk: 1, shares: 500000,   cash: 4000000,  days: 31 },
     { acr: 'HRG', blk: 1, shares: 10000000, payout: 'property', valueOverride: 5000000, days: 31, note: 'Edit valueOverride to avg property sale' },
+    { acr: 'CBD', blk: 1, shares: 350000,   payout: 'nerve', valueOverride: 250000, days: 7, note: '50 nerve at $5k' },
+    { acr: 'THS', blk: 1, shares: 150000,   payout: 'Box of Medical Supplies', days: 7 },
+    { acr: 'TCT', blk: 2, shares: 200000,   cash: 1000000,  days: 31 },
+    { acr: 'TCT', blk: 1, shares: 100000,   cash: 1000000,  days: 31 },
     { acr: 'PRN', blk: 1, shares: 1000000,  payout: 'Erotic DVD', days: 7 },
     { acr: 'FHG', blk: 1, shares: 2000000,  payout: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'SYM', blk: 1, shares: 500000,   payout: 'Drug Pack', days: 7 }

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Torn Stock Payout Calculator (display only)
 // @namespace    sterlingarcher.payout
-// @version      1.3.2
+// @version      1.4.0
 // @description  Values every benefit block at live item market prices over a chosen horizon (7 days to 12 months) and flags blocks worth selling. Detects your holdings from the API (Limited key) or falls back to a fixed list. Read-only API calls. No game actions.
 // @match        https://www.torn.com/page.php?sid=stocks*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @homepageURL  https://github.com/Ste5144/Torn-Script
 // @updateURL    https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js
 // @downloadURL  https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-stock-payout-calc.user.js
@@ -12,37 +13,60 @@
 
 (function () {
   'use strict';
-  const VERSION = '1.3.2'; // keep in step with @version
+  const VERSION = '1.4.0'; // keep in step with @version
 
   // ---------- CONFIG: fallback blocks, used only if your holdings can't be read (needs a Limited key) ----------
   // shares = shares in THAT block only. kind: item (payout item name), cash, energy, nerve, points, happy.
   const BLOCKS = [
-    { acr: 'SYM', blk: 1, shares: 500000,   kind: 'item', item: 'Drug Pack', days: 7 },
-    { acr: 'SYM', blk: 2, shares: 1000000,  kind: 'item', item: 'Drug Pack', days: 7 },
+    { acr: 'CBD', blk: 1, shares: 350000,   kind: 'nerve', qty: 50, days: 7 },
     { acr: 'FHG', blk: 1, shares: 2000000,  kind: 'item', item: 'Feathery Hotel Coupon', days: 7 },
     { acr: 'FHG', blk: 2, shares: 4000000,  kind: 'item', item: 'Feathery Hotel Coupon', days: 7 },
+    { acr: 'GRN', blk: 1, shares: 500000,   kind: 'cash', amount: 4000000,  days: 31 },
+    { acr: 'HRG', blk: 1, shares: 10000000, kind: 'property', days: 31, note: 'Set $/property to your average sale price' },
+    { acr: 'IOU', blk: 1, shares: 3000000,  kind: 'cash', amount: 12000000, days: 31 },
+    { acr: 'MCS', blk: 1, shares: 350000,   kind: 'energy', qty: 100, days: 7 },
+    { acr: 'MUN', blk: 1, shares: 5000000,  kind: 'item', item: 'Six-Pack of Energy Drink', days: 7 },
     { acr: 'PRN', blk: 1, shares: 1000000,  kind: 'item', item: 'Erotic DVD', days: 7 },
     { acr: 'PRN', blk: 2, shares: 2000000,  kind: 'item', item: 'Erotic DVD', days: 7 },
-    { acr: 'MUN', blk: 1, shares: 5000000,  kind: 'item', item: 'Six-Pack of Energy Drink', days: 7 },
-    { acr: 'GRN', blk: 1, shares: 500000,   kind: 'cash', amount: 4000000,  days: 31 },
-    { acr: 'IOU', blk: 1, shares: 3000000,  kind: 'cash', amount: 12000000, days: 31 },
-    { acr: 'TMI', blk: 1, shares: 6000000,  kind: 'cash', amount: 25000000, days: 31 },
-    { acr: 'HRG', blk: 1, shares: 10000000, kind: 'property', days: 31, note: 'Set $/property to your average sale price' },
-    { acr: 'MCS', blk: 1, shares: 350000,   kind: 'energy', qty: 100, days: 7 }
-  ];
+    { acr: 'PTS', blk: 1, shares: 10000000, kind: 'points', qty: 100, days: 7 },
+    { acr: 'SYM', blk: 1, shares: 500000,   kind: 'item', item: 'Drug Pack', days: 7 },
+    { acr: 'SYM', blk: 2, shares: 1000000,  kind: 'item', item: 'Drug Pack', days: 7 },
+    { acr: 'TCT', blk: 1, shares: 100000,   kind: 'cash', amount: 1000000,  days: 31 },
+    { acr: 'TCT', blk: 2, shares: 200000,   kind: 'cash', amount: 1000000,  days: 31 },
+    { acr: 'THS', blk: 1, shares: 150000,   kind: 'item', item: 'Box of Medical Supplies', days: 7 },
+    { acr: 'TMI', blk: 1, shares: 6000000,  kind: 'cash', amount: 25000000, days: 31 }
+  ]; // holdings at 19 Nov 2026
   const HORIZONS = [[7, '7 days'], [14, '14 days'], [30, '1 month'], [61, '2 months'], [91, '3 months'], [182, '6 months'], [273, '9 months'], [365, '12 months']];
   const ENERGY_REF = { item: 'Can of Red Cow', energy: 25 }; // default $/energy = cheapest Red Cow / 25
   const LS = 'stockPayoutCalc.v3';
 
   // ---------- STATE ----------
+  // The Limited key is kept in Tampermonkey's own storage, which other scripts on torn.com cannot read.
+  // Everything else stays in the page's localStorage so the Flip Tracker can reuse the detected holdings.
+  // Torn PDA without GM storage falls back to localStorage.
+  const HAS_GM = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
   const load = () => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } };
-  const save = () => { try { localStorage.setItem(LS, JSON.stringify(S)); } catch {} };
+  const save = () => {
+    try {
+      const o = Object.assign({}, S);
+      if (HAS_GM) { GM_setValue('payoutKey', S.key || ''); delete o.key; }
+      localStorage.setItem(LS, JSON.stringify(o));
+    } catch {}
+  };
   const S = Object.assign({
     key: '', days: 91, altRate: 0, sellItems: true, priceMode: 'low',
     nerveVal: 5000, energyVal: null, happyVal: 0, propVal: 5000000, pointVal: null, data: null, off: {}, showHidden: false
   }, load());
-  // reuse the flip tracker's key if this one is blank
+  if (HAS_GM) {
+    const gk = GM_getValue('payoutKey', '');
+    if (gk) S.key = gk;
+  }
+  // reuse an older version's key if this one is blank, then clear old copies out of localStorage
   if (!S.key) { try { S.key = (JSON.parse(localStorage.getItem('stockPayoutCalc.v2')) || {}).key || (JSON.parse(localStorage.getItem('stockPayoutCalc.v1')) || {}).key || (JSON.parse(localStorage.getItem('flipTracker.v1')) || {}).key || ''; } catch {} }
+  if (HAS_GM) {
+    try { ['stockPayoutCalc.v1', 'stockPayoutCalc.v2'].forEach((k) => localStorage.removeItem(k)); } catch {}
+    if (S.key || (load().key)) save();
+  }
 
   const $ = (n) => n == null || isNaN(n) ? '–' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   // $1.234b for billions, $123m / $12.3m for millions, $456k below a million
@@ -267,7 +291,7 @@
       const k = th.dataset.s; sortDir = sortKey === k ? -sortDir : (k === 'acr' ? 1 : -1); sortKey = k; render();
     });
     on('#r', 'onclick', async () => {
-      if (!S.key) return render('Enter a Public key first');
+      if (!S.key) return render('Enter a Limited key first');
       const s = (m) => { const el = P.querySelector('#st'); if (el) el.textContent = m; };
       try { await refresh(s); render(); } catch (e) { render('Error: ' + e.message); }
     });
