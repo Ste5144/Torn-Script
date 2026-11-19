@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.0.3
-// @description  Display-only company advisor for a Mining Corporation: staff allocation by total EE with Sales Executive and Secretary filled first, staff health, and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
+// @version      2.1.0
+// @description  Display-only company advisor for a Mining Corporation: staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -16,17 +16,25 @@
   'use strict';
 // Archer Mining Co best-guess model. Pure functions, shared by the page and tests.
 const Model = {
-  production(p, mo) { return Math.max(0, p.prodBase + p.prodPerMO * mo); },
+  // Production from Mill Operator "equivalents" (sum of MO EE / refEE). A Mine Engineer below refEE, or missing, costs up to meLoss tonnes.
+  production(p, moEq, meEE) {
+    const meShare = meEE == null ? 1 : Math.min(1, Math.max(0, meEE) / p.refEE);
+    return Math.max(0, p.prodBase + p.prodPerMO * moEq - p.meLoss * (1 - meShare));
+  },
+  // Demand rises with total Sales Executive EE (measured 11-13 Nov: 4 to 5 SE, +24% SE EE, +6% sold).
+  salesFactor(p, seEE) { return seEE > 0 && p.refSE > 0 ? Math.pow(seEE / p.refSE, p.seElast) : 1; },
   adLift(p, ads) { return 1 + p.adA * (1 - Math.exp(-ads / p.adK)); },
   priceFactor(p, price) { return Math.pow(price / p.refPrice, p.elast); },
-  demand(p, price, ads) { return p.D0 * Model.priceFactor(p, price) * Model.adLift(p, ads); },
+  demand(p, price, ads, seEE) { return p.D0 * Model.priceFactor(p, price) * Model.adLift(p, ads) * Model.salesFactor(p, seEE); },
 
   // One day. useStock: sell from stock if production is short.
   day(p, o) {
     const price = o.price ?? p.price, ads = o.ads ?? p.ads, mo = o.mo ?? p.mo;
     const wages = o.wages ?? p.wages;
-    const prod = Model.production(p, mo);
-    const dem = Model.demand(p, price, ads);
+    const moEq = o.moEq ?? (o.mo != null && p.mo ? p.moEq * o.mo / p.mo : (p.moEq ?? mo));
+    const meEE = o.meEE !== undefined ? o.meEE : p.meEE;
+    const prod = Model.production(p, moEq, meEE);
+    const dem = Model.demand(p, price, ads, o.seEE ?? p.seEE);
     const supply = o.useStock ? prod + Math.max(0, p.stock) : prod;
     const sold = Math.min(dem, supply);
     const revenue = sold * price;
@@ -133,7 +141,8 @@ function hungarian(c) {
   const set = (k, v) => GM_setValue(k, JSON.stringify(v));
   const DEF = {
     key: '', bonus: 0, weights: {}, locks: {}, lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
-    model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 0 },
+    model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 40000,
+             refEE: 115, meLoss: 1600, refSE: 518, seElast: 0.25 },
     seedLog: [
       { label: '4-11 Oct', days: 8, price: 8500, ads: 7.5, sold: 9415, capped: true },
       { label: '12-17 Oct', days: 6, price: 8625, ads: 7.5, sold: 9283, capped: true },
@@ -147,6 +156,7 @@ function hungarian(c) {
   };
   const cfg = Object.assign({}, DEF, get('cfg', {}));
   cfg.model = Object.assign({}, DEF.model, cfg.model || {});
+  if (!cfg.v21) { if (!(+cfg.model.warehouseCap > 0)) cfg.model.warehouseCap = 40000; cfg.v21 = true; set('cfg', cfg); }
   // Sales Executive and Secretary earn the money in a mine; support roles must meet requirements; Mill Operator takes the rest.
   const EARN = ['sales executive', 'secretary'];
   const DEF_W = { 'sales executive': 10, 'secretary': 10, 'site manager': 1, 'safety inspector': 1, 'mine engineer': 1, 'electrician': 1, 'production foreman': 1, 'mill operator': 0.1 };
@@ -227,7 +237,7 @@ function hungarian(c) {
     return {
       ts: j.timestamp || Math.floor(Date.now() / 1000), name: prof.name, income: prof.daily_income, customers: prof.daily_customers, weekly: prof.weekly_income,
       funds: det.company_funds, popularity: det.popularity, efficiency: det.efficiency, environment: det.environment,
-      ads: (+det.advertising_budget || 0) / 1e6, emps, inStock, sold, made, price, soldWorth,
+      ads: (+det.advertising_budget || 0) / 1e6, trains: det.trains_available, emps, inStock, sold, made, price, soldWorth,
       stockKeys: Object.keys(st), hasStats: emps.some(e => e.man || e.int || e.end)
     };
   }
@@ -272,13 +282,15 @@ function hungarian(c) {
   btn.addEventListener('click', () => { const open = box.style.display !== 'block'; box.style.display = open ? 'block' : 'none'; if (open && !data) load(); else render(); });
 
   function render() {
-    const tabs = [['alloc', 'Allocation'], ['health', 'Staff health'], ['setup', 'Setup'], ['settings', 'Settings']];
+    const tabs = [['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['settings', 'Settings']];
     let h = `<header><h2>Archer Mining Co advisor</h2>${tabs.map(([k, l]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}
       <button class="act" data-act="refresh">Refresh</button><span class="mut" id="amc-status">${esc(status)}</span></header><div class="body">`;
     if (lastErr) h += `<div class="rec w">${esc(lastErr)}</div>`;
     if (tab === 'settings') h += viewSettings();
     else if (!data) h += `<p class="mut">No data yet. ${cfg.key ? 'Press Refresh.' : 'Add your Limited key in Settings.'}</p>`;
-    else if (tab === 'alloc') h += viewAlloc();
+    else if (tab === 'alloc') h += runwayBanner() + viewAlloc();
+    else if (tab === 'mix') h += runwayBanner() + viewMix();
+    else if (tab === 'trains') h += viewTrains();
     else if (tab === 'health') h += viewHealth();
     else if (tab === 'setup') h += viewSetup();
     box.innerHTML = h + '</div>';
@@ -287,9 +299,10 @@ function hungarian(c) {
   // ---- Allocation
   const W = r => cfg.weights[r] === undefined ? 1 : +cfg.weights[r];
   const isLocked = e => !!cfg.locks[e.id] || (cfg.lockRoles || []).includes(norm(e.position));
-  function solve(emps, b) {
+  function solve(emps, b, counts) {
     const slots = [];
-    emps.forEach(e => { if (REQ[norm(e.position)]) slots.push(norm(e.position)); }); // keep current role counts
+    if (counts) Object.entries(counts).forEach(([r, n]) => { for (let k = 0; k < n; k++) slots.push(r); });
+    else emps.forEach(e => { if (REQ[norm(e.position)]) slots.push(norm(e.position)); }); // keep current role counts
     const n = Math.max(slots.length, emps.length);
     const cost = [];
     for (let i = 0; i < n; i++) { const row = []; for (let j = 0; j < n; j++) {
@@ -385,8 +398,10 @@ function hungarian(c) {
   // ---- Setup model
   function modelParams() {
     const mo = data.emps.filter(e => norm(e.position) === 'mill operator');
+    const q = setupStats(data.emps.map(e => norm(e.position)));
     const p = Object.assign({}, cfg.model, {
       price: data.price || 8625, ads: data.ads, stock: data.inStock, mo: mo.length,
+      moEq: q.moEq, meEE: q.meEE, seEE: q.seEE,
       wages: data.emps.reduce((a, e) => a + e.wage, 0), moWage: mo.length ? mo.reduce((a, e) => a + e.wage, 0) / mo.length : 0 });
     return p;
   }
@@ -438,6 +453,110 @@ function hungarian(c) {
     out._fit = f;
   }
 
+  // ---- Shared: EE totals for a given assignment (array of role per employee, same order as data.emps)
+  function curB() { return cfg.bonus > 0 ? cfg.bonus : fitBonus(data.emps).b; }
+  function setupStats(asg) {
+    const b = curB(), m = cfg.model;
+    let seEE = 0, seN = 0, moEE = 0, moN = 0, meEE = null;
+    data.emps.forEach((e, i) => {
+      const r = asg[i]; if (!r) return;
+      // Current role: use Torn's own total minus the management boost; other roles: the estimate.
+      const v = r === norm(e.position) && e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, r, b) || 0);
+      if (r === 'sales executive') { seEE += v; seN++; }
+      else if (r === 'mill operator') { moEE += v; moN++; }
+      else if (r === 'mine engineer') meEE = v;
+    });
+    return { seEE, seN, moEE, moN, moEq: moEE / (m.refEE || 115), meEE: meEE == null ? 0 : meEE };
+  }
+
+  // ---- Stock runway (recent logged days first, else the model)
+  function runway() {
+    const days = Object.keys(snaps).sort().slice(-4).map(d => snaps[d]).filter(s => s && s.sold > 0 && s.made > 0);
+    let net, src;
+    if (days.length >= 2) { net = days.reduce((a, s) => a + s.made - s.sold, 0) / days.length; src = `last ${days.length} logged days`; }
+    else { const p = modelParams(), d = Model.day(p, {}); net = d.prod - d.dem; src = 'model estimate'; }
+    const stock = data.inStock || 0, cap = +cfg.model.warehouseCap || 0;
+    let msg, warn = false;
+    if (net < -1) { const n = stock / -net; msg = `Stock ${t(stock)} t, falling about ${t(-net)} t/day: runs out in about <b>${n.toFixed(1)} days</b>.`; warn = n < 7; }
+    else if (net > 1 && cap) { const n = Math.max(0, cap - stock) / net; msg = `Stock ${t(stock)} t, rising about ${t(net)} t/day: hits the ${t(cap)} t cap in about <b>${n.toFixed(1)} days</b>.`; warn = n < 7; }
+    else msg = `Stock ${t(stock)} t, roughly steady.`;
+    return { net, msg: msg + ` <span class="mut">(${src})</span>`, warn };
+  }
+  function runwayBanner() { const r = runway(); return `<div class="rec ${r.warn ? 'w' : ''}">${r.msg}</div>`; }
+
+  // ---- Role mix planner: how many Sales Executives vs Mill Operators
+  function viewMix() {
+    if (!data.hasStats) return `<div class="rec w">No working stats from the API, so the planner cannot run.</div>`;
+    const b = curB(), p = modelParams(), n = data.emps.length;
+    const cnt = r => data.emps.filter(e => norm(e.position) === r).length;
+    const fixed = { 'site manager': 1, 'safety inspector': 1, 'production foreman': 1, 'electrician': 1, 'mine engineer': 1, 'secretary': Math.max(2, cnt('secretary')) };
+    const fixedN = Object.values(fixed).reduce((a, x) => a + x, 0);
+    const rows = [];
+    for (let se = 3; se <= 6; se++) {
+      const mo = n - fixedN - se; if (mo < 1) continue;
+      const counts = Object.assign({}, fixed, { 'sales executive': se, 'mill operator': mo });
+      const asg = solve(data.emps, b, counts), q = setupStats(asg);
+      const d = Model.day(p, { moEq: q.moEq, meEE: q.meEE, seEE: q.seEE, mo });
+      const moves = data.emps.map((e, i) => ({ e, from: norm(e.position), to: asg[i] })).filter(m => m.to && m.to !== m.from);
+      rows.push({ se, mo, q, d, moves });
+    }
+    const nowQ = setupStats(data.emps.map(e => norm(e.position)));
+    const now = Model.day(p, { moEq: nowQ.moEq, meEE: nowQ.meEE, seEE: nowQ.seEE });
+    // Steady-state income: once stock is gone you sell the smaller of made and demand.
+    const rev = d => Math.min(d.dem, d.prod) * d.price;
+    rows.unshift({ se: cnt('sales executive'), mo: cnt('mill operator'), q: nowQ, d: now, moves: [], isNow: true });
+    const best = rows.reduce((a, r) => (rev(r.d) > rev(a.d) + 5e5 ? r : a), rows[0]); // must beat now by $0.5m/day
+    let h = `<div class="tiles"><div class="tile">Now<b>${cnt('sales executive')} SE / ${cnt('mill operator')} MO</b><span class="mut">${cnt('mine engineer') ? 'Mine Engineer filled' : '<span class="wrn">no Mine Engineer</span>'}</span></div>
+      <div class="tile">Made / demand now<b>${t(now.prod)} / ${t(now.dem)} t</b><span class="mut">${now.prod >= now.dem ? 'production covers sales' : 'production short: stock falls'}</span></div>
+      <div class="tile">Best steady mix<b>${best.isNow ? 'Keep as now' : best.se + ' SE / ' + best.mo + ' MO'}</b><span class="mut">${best.isNow ? 'no mix beats it by $0.5m/day' : d$(rev(best.d) - rev(now)) + '/day vs now'}</span></div></div>
+      <div class="rec">Each row re-runs the allocation with that many Sales Executives, 1 of each support role (including a Mine Engineer) and ${fixed.secretary} Secretaries, then estimates tonnes made and sold. While you have stock you sell up to demand, so "income while stock lasts" is what a mix earns now; "steady" assumes stock is gone and you sell the smaller of made and demand. A mix that earns more now but runs stock down is worth it until stock gets low, then switch back.</div>
+      <div class="sc"><table><tr><th>SE</th><th>MO</th><th>SE EE</th><th>MO EE</th><th>Made t</th><th>Demand t</th><th>Income while stock lasts</th><th>vs now</th><th>Steady income</th><th>vs now</th><th class="l">Stock</th></tr>` +
+      rows.map(r => {
+        const gap = r.d.prod - r.d.dem, stock = data.inStock || 0;
+        const st = gap < -1 ? `${(stock / -gap).toFixed(1)} days to empty` : gap > 1 && cfg.model.warehouseCap ? `${(Math.max(0, cfg.model.warehouseCap - stock) / gap).toFixed(1)} days to cap` : 'steady';
+        const isNow = !!r.isNow;
+        return `<tr class="${isNow ? 'cur' : ''}"><td>${r.se}${isNow ? ' (as now)' : ' (reshuffled)'}</td><td>${r.mo}</td><td>${t(r.q.seEE)}</td><td>${t(r.q.moEE)}</td><td>${t(r.d.prod)}</td><td>${t(r.d.dem)}</td><td>${m$(r.d.dem * r.d.price)}</td><td class="${r.d.dem >= now.dem ? 'pos' : 'neg'}">${d$((r.d.dem - now.dem) * r.d.price)}</td><td>${m$(rev(r.d))}</td><td class="${rev(r.d) >= rev(now) ? 'pos' : 'neg'}">${d$(rev(r.d) - rev(now))}</td><td class="l ${gap < -1 ? 'wrn' : ''}">${st}</td></tr>`;
+      }).join('') + `</table></div>`;
+    rows.forEach(r => {
+      if (!r.moves.length) return;
+      h += `<details><summary class="mut" style="cursor:pointer">Moves for ${r.se} SE / ${r.mo} MO (${r.moves.length})</summary><ul>${r.moves.map(m =>
+        `<li>${esc(m.e.name)}: ${ROLE_NAMES[m.from] || esc(m.from)} → <b>${ROLE_NAMES[m.to]}</b> (${tot(m.e, m.to, b)} EE)</li>`).join('')}</ul></details>`;
+    });
+    h += `<p class="mut">Demand uses Sales Executive EE with elasticity ${cfg.model.seElast} (from the 11-13 Nov test) and production uses Mill Operator EE (${cfg.model.prodPerMO} t per ${cfg.model.refEE} EE) with up to ${t(cfg.model.meLoss)} t lost without a full-strength Mine Engineer. All are estimates: change one or two people at a time and check the next day's figures. Tune in Settings.</p>`;
+    return h;
+  }
+
+  // ---- Train planner: each train gives +50 to the role's primary stat and +25 to the secondary.
+  function viewTrains() {
+    if (!data.hasStats) return `<div class="rec w">No working stats from the API, so the planner cannot run.</div>`;
+    const b = curB(), avail = +data.trains || 0;
+    const raw = (stat, req) => { if (!(stat > 0)) return 0; const x = stat * b / req; return Math.min(45, 45 * x) + Math.max(0, 5 * Math.log2(x)); };
+    const people = data.emps.map(e => {
+      const r = REQ[norm(e.position)]; if (!r) return null;
+      return { e, r, role: norm(e.position), add: 0, w: 1 };
+    }).filter(Boolean);
+    const val = (x, k) => raw(x.e[x.r.p[0]] + 50 * k, x.r.p[1]) + raw(x.e[x.r.s[0]] + 25 * k, x.r.s[1]);
+    const plan = Math.max(avail, 20);
+    for (let k = 0; k < plan; k++) {
+      let best = null, bg = -1;
+      people.forEach(x => { const g = (val(x, x.add + 1) - val(x, x.add)) * x.w; if (g > bg) { bg = g; best = x; } });
+      if (!best) break; best.add++;
+    }
+    const used = people.filter(x => x.add > 0).sort((a, b2) => b2.add - a.add);
+    let h = `<div class="tiles"><div class="tile">Trains available<b>${data.trains == null ? '?' : t(avail)}</b><span class="mut">max 20 stored; extra is wasted</span></div>
+      <div class="tile">Plan below<b>${plan} trains</b><span class="mut">${avail >= 20 ? '<span class="wrn">at the cap: use some today</span>' : 'shown for a full 20'}</span></div></div>
+      <div class="rec">Trains go to whoever gains the most EE per train. Staff still below their role's stat requirement gain about 10 times more than staff above it, so new or weak hires usually come first. Each train: +50 primary, +25 secondary stat for their current role. Train after any role changes, since a move changes which stats the train raises.</div>
+      <div class="sc"><table><tr><th class="l">Employee</th><th class="l">Role</th><th>Trains</th><th>Stats EE now</th><th>After</th><th>Gain</th><th class="l">Main stat vs requirement</th></tr>` +
+      used.map(x => {
+        const before = wsEE(x.e, x.role, b);
+        const after = statEE(x.e[x.r.p[0]] + 50 * x.add, x.r.p[1], b) + statEE(x.e[x.r.s[0]] + 25 * x.add, x.r.s[1], b);
+        const pct = Math.round(x.e[x.r.p[0]] * b / x.r.p[1] * 100);
+        return `<tr><td class="l">${esc(x.e.name)}</td><td class="l">${ROLE_NAMES[x.role]}</td><td><b>${x.add}</b></td><td>${before}</td><td>${after}</td><td class="pos">${sg(after - before)}</td><td class="l ${pct < 100 ? 'wrn' : 'mut'}">${pct}%</td></tr>`;
+      }).join('') + `</table></div>
+      <p class="mut">EE shown is the working-stats part only (whole numbers, so a single train may show +0 until it tips over). If nobody is below requirement, gains are small: above the requirement each doubling of a stat adds only 5 EE.</p>`;
+    return h;
+  }
+
   // ---- Settings
   function viewSettings() {
     const m = cfg.model;
@@ -453,7 +572,8 @@ function hungarian(c) {
       <p><button class="act" data-act="resetw">Reset weights and locks to defaults</button></p>
       <h3>Demand and production model</h3>
       ${fld('D0', 'Base demand at $0 ads (t)')}${fld('refPrice', 'Reference price $')}${fld('adA', 'Max ad lift')}${fld('adK', 'Ad scale $m')}${fld('elast', 'Price elasticity')}
-      ${fld('prodBase', 'Non-MO production (t)')}${fld('prodPerMO', 'Per MO (t)')}${fld('otherCosts', 'Other daily costs $')}
+      ${fld('prodBase', 'Non-MO production (t)')}${fld('prodPerMO', 'Per MO at reference EE (t)')}${fld('refEE', 'Reference MO EE')}${fld('meLoss', 'Tonnes lost without a Mine Engineer')}${fld('otherCosts', 'Other daily costs $')}
+      ${fld('refSE', 'Sales Executive EE the demand figures assume')}${fld('seElast', 'Demand elasticity to SE EE')}${fld('warehouseCap', 'Storage cap (t)')}
       <p><button class="act" data-act="clearhist">Clear stored history</button> <span class="mut">${Object.keys(snaps).length} report days stored.</span></p>`;
   }
 
