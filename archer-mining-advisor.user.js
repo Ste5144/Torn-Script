@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.1.0
-// @description  Display-only company advisor for a Mining Corporation: staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
+// @version      2.2.0
+// @description  Display-only company advisor for a Mining Corporation: daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -244,8 +244,18 @@ function hungarian(c) {
   function record(d) {
     const day = reportDay(d.ts);
     const mo = d.emps.filter(e => norm(e.position) === 'mill operator').length;
-    snaps[day] = { sold: d.sold, made: d.made, price: d.price, ads: d.ads, stock: d.inStock, mo, income: d.income, customers: d.customers,
-      wages: d.emps.reduce((a, e) => a + e.wage, 0) };
+    const c = r => d.emps.filter(e => norm(e.position) === r).length;
+    const wagesNow = d.emps.reduce((a, e) => a + e.wage, 0);
+    snaps[day] = Object.assign({}, snaps[day] || {}, { sold: d.sold, made: d.made, price: d.price, ads: d.ads, stock: d.inStock, mo, income: d.income, customers: d.customers,
+      se: c('sales executive'), sec: c('secretary'), me: c('mine engineer'), emp: d.emps.length, env: d.environment,
+      wages: wagesNow, profit: d.income != null ? d.income - wagesNow - d.ads * 1e6 : undefined, src: 'api' });
+    // Pasted Torn records are authoritative for that day's results; keep them.
+    const prevSnap = (get('snaps', {}) || {})[day];
+    if (prevSnap && /paste/.test(prevSnap.src || '')) {
+      ['sold', 'made', 'stock', 'income', 'profit', 'wages'].forEach(k => { if (prevSnap[k] != null) snaps[day][k] = prevSnap[k]; });
+      snaps[day].src = 'api+paste';
+    }
+
     const h = {}; d.emps.forEach(e => h[e.name] = e.total); eeHist[day] = h;
     const keep = Object.keys(snaps).sort().slice(-120); snaps = Object.fromEntries(keep.map(k => [k, snaps[k]]));
     const keepE = Object.keys(eeHist).sort().slice(-120); eeHist = Object.fromEntries(keepE.map(k => [k, eeHist[k]]));
@@ -277,17 +287,18 @@ function hungarian(c) {
   const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
   const btn = document.createElement('button'); btn.id = 'amc-btn'; btn.textContent = 'AMC advisor'; document.body.appendChild(btn);
   const box = document.createElement('div'); box.id = 'amc'; document.body.appendChild(box);
-  let tab = 'alloc', status = '';
+  let tab = 'brief', status = '';
   function setStatus(s) { status = s; const n = box.querySelector('#amc-status'); if (n) n.textContent = s; }
   btn.addEventListener('click', () => { const open = box.style.display !== 'block'; box.style.display = open ? 'block' : 'none'; if (open && !data) load(); else render(); });
 
   function render() {
-    const tabs = [['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['settings', 'Settings']];
+    const tabs = [['brief', 'Briefing'], ['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['settings', 'Settings']];
     let h = `<header><h2>Archer Mining Co advisor</h2>${tabs.map(([k, l]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}
       <button class="act" data-act="refresh">Refresh</button><span class="mut" id="amc-status">${esc(status)}</span></header><div class="body">`;
     if (lastErr) h += `<div class="rec w">${esc(lastErr)}</div>`;
     if (tab === 'settings') h += viewSettings();
     else if (!data) h += `<p class="mut">No data yet. ${cfg.key ? 'Press Refresh.' : 'Add your Limited key in Settings.'}</p>`;
+    else if (tab === 'brief') h += viewBrief();
     else if (tab === 'alloc') h += runwayBanner() + viewAlloc();
     else if (tab === 'mix') h += runwayBanner() + viewMix();
     else if (tab === 'trains') h += viewTrains();
@@ -557,6 +568,143 @@ function hungarian(c) {
     return h;
   }
 
+  // ---- Daily briefing
+  const setupKey = s => s.se == null ? '' : `${s.se} SE · ${s.sec ?? '?'} Sec · ${s.mo} MO · ${s.me ? 'ME' : 'no ME'}${s.emp != null ? ' · ' + s.emp + ' staff' : ''}${s.ads != null ? ' · $' + s.ads + 'm ads' : ''} · $${t(s.price)}`;
+  function loggedDays() {
+    const rows = Object.keys(snaps).sort().map(d => Object.assign({ day: d }, snaps[d])).filter(s => s.sold > 0);
+    // Stock-record pastes have no ad budget: fill from the nearest day that has one (earlier first, then later).
+    let last = null; rows.forEach(r => { if (r.ads != null) last = r.ads; else if (last != null) r.ads = last; });
+    let next = null; for (let i = rows.length - 1; i >= 0; i--) { if (rows[i].ads != null) next = rows[i].ads; else if (next != null) rows[i].ads = next; }
+    return rows;
+  }
+  // Group consecutive days with the same setup, ads and price.
+  function periods() {
+    const out = [];
+    loggedDays().forEach(s => {
+      const k = setupKey(s), last = out[out.length - 1];
+      if (last && last.key === k) last.days.push(s); else out.push({ key: k, days: [s] });
+    });
+    out.forEach(p => {
+      const n = p.days.length, avg = f => { const v = p.days.map(f).filter(x => x != null && !isNaN(x)); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : null; };
+      Object.assign(p, { n, from: p.days[0].day, to: p.days[n - 1].day, sold: avg(d => d.sold), made: avg(d => d.made || null),
+        profit: avg(d => d.profit), income: avg(d => d.income), first: p.days[0] });
+    });
+    return out;
+  }
+  function verdictOf(prev, cur) {
+    if (!prev || !cur || !cur.key) return null;
+    if (cur.n < 3) return { wait: 3 - cur.n };
+    const sd = 360, se = sd * Math.sqrt(1 / cur.n + 1 / Math.max(1, prev.n));
+    const dSold = cur.sold - prev.sold, dProfit = cur.profit != null && prev.profit != null ? cur.profit - prev.profit : null;
+    const call = Math.abs(dSold) < 1.5 * se ? 'too close to call' : dSold > 0 ? 'sales up' : 'sales down';
+    return { dSold, dProfit, call, se };
+  }
+  function recommend(per, rw) {
+    const b = curB(), cnt = r => data.emps.filter(e => norm(e.position) === r).length;
+    const se = cnt('sales executive'), me = cnt('mine engineer');
+    const cur = per[per.length - 1];
+    const stock = data.inStock || 0, cap = +cfg.model.warehouseCap || 0;
+    const daysEmpty = rw.net < -1 ? stock / -rw.net : Infinity, daysCap = rw.net > 1 && cap ? Math.max(0, cap - stock) / rw.net : Infinity;
+    const mos = data.emps.filter(e => norm(e.position) === 'mill operator' && !isLocked(e));
+    const ses = data.emps.filter(e => norm(e.position) === 'sales executive' && !isLocked(e));
+    const curEE = e => e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, norm(e.position), b) || 0);
+    if (daysEmpty < 10) {
+      if (!me) {
+        const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
+        return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${c ? esc(c.e.name) : 'your best Mill Operator'} to Mine Engineer</b>${c ? ` (${c.v} EE)` : ''}: worth roughly 1 to 2 Mill Operators of output.` };
+      }
+      const c = ses.map(e => ({ e, gain: (tot(e, 'mill operator', b) || 0), lose: curEE(e) })).sort((x, y) => x.lose - y.lose)[0];
+      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days. Production is short: <b>${c ? 'move ' + esc(c.e.name) + ' (weakest Sales Executive, ' + c.lose + ' EE) to Mill Operator' : 'add a Mill Operator'}</b>, or hire a stronger Mill Operator to replace your weakest. Recheck in 2 days.` };
+    }
+    if (cur && cur.n < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.n} more logged day(s) so the change can be judged.` };
+    if ((daysEmpty > 25 || daysCap < 20) && se < 6) {
+      const c = mos.map(e => ({ e, seEE: tot(e, 'sales executive', b) || 0, moEE: curEE(e) })).filter(x => x.seEE >= 110)
+        .sort((x, y) => (y.seEE - y.moEE) - (x.seEE - x.moEE))[0];
+      if (c) {
+        const p = modelParams(), now = Model.day(p, {});
+        const after = Model.day(p, { seEE: (p.seEE || 0) + c.seEE, moEq: Math.max(0, p.moEq - c.moEE / (cfg.model.refEE || 115)) });
+        const net = after.prod - after.dem;
+        return { level: '', text: `Stock ${t(stock)} t with ${isFinite(daysEmpty) ? daysEmpty.toFixed(0) + ' days to empty' : 'no shortage'}${isFinite(daysCap) ? ', ' + daysCap.toFixed(0) + ' days to the cap' : ''}: room to sell more. <b>Move ${esc(c.e.name)} from Mill Operator to Sales Executive</b> (${c.moEE} EE as MO, ${c.seEE} as SE). Model: demand ${sg(after.dem - now.dem)} t/day, about ${d$((after.dem - now.dem) * p.price)}/day while stock lasts; stock then ${net < -1 ? 'falls about ' + t(-net) + ' t/day (' + (stock / -net).toFixed(0) + ' days)' : 'holds'}.` };
+      }
+    }
+    return { level: '', text: `<b>Hold.</b> Stock ${t(stock)} t, ${rw.net < -1 ? 'falling ' + t(-rw.net) : rw.net > 1 ? 'rising ' + t(rw.net) : 'steady at'} t/day. No change clears the rules (add a Sales Executive when 25+ days of stock; cut one when under 10).` };
+  }
+  function costCheck() {
+    const days = loggedDays().filter(s => s.income != null && s.profit != null);
+    const out = [];
+    if (days.length >= 2) {
+      const a = days[days.length - 2], z = days[days.length - 1];
+      const ca = a.income - a.profit, cz = z.income - z.profit;
+      if (Math.abs(cz - ca) >= 2e6) out.push(`Daily costs ${cz > ca ? 'up' : 'down'} ${m$(Math.abs(cz - ca))} (${m$(ca)} on ${a.day} to ${m$(cz)} on ${z.day}).`);
+    }
+    const mult = +cfg.wageMult || 20;
+    const over = data.emps.map(e => ({ e, f: mult * Math.max(e.man, e.int, e.end), w: e.wage })).filter(x => x.f > 0 && x.w - x.f >= 250000).sort((x, y) => (y.w - y.f) - (x.w - x.f));
+    return { notes: out, over, mult };
+  }
+  function viewBrief() {
+    const per = periods(), rw = runway(), cc = costCheck();
+    const cur = per[per.length - 1], prev = per[per.length - 2], v = verdictOf(prev, cur), rec = recommend(per, rw);
+    const last = loggedDays().slice(-1)[0];
+    let h = `<div class="tiles">
+      <div class="tile">Last logged day<b>${last ? esc(last.day) : 'none yet'}</b><span class="mut">${last ? t(last.sold) + ' sold / ' + (last.made ? t(last.made) : '?') + ' made' : 'open the panel after 18:10 TCT each day'}</span></div>
+      <div class="tile">Stock<b>${t(data.inStock)} t</b><span class="mut">${rw.net < -1 ? 'falling ' + t(-rw.net) + ' t/day' : rw.net > 1 ? 'rising ' + t(rw.net) + ' t/day' : 'steady'}</span></div>
+      <div class="tile">Profit last day<b>${last && last.profit != null ? m$(last.profit) : '?'}</b><span class="mut">income ${last && last.income != null ? m$(last.income) : '?'}</span></div></div>
+      <h3>Next move</h3><div class="rec ${rec.level}">${rec.text}</div>`;
+    if (cur && prev) {
+      h += `<h3>Last change</h3>`;
+      if (v && v.wait) h += `<div class="rec">Changed to <b>${esc(cur.key)}</b> on ${esc(cur.from)}. Needs ${v.wait} more logged day(s) before it can be judged.</div>`;
+      else if (v) h += `<div class="rec ${v.call === 'sales down' ? 'w' : ''}"><b>${esc(cur.key)}</b> vs before (<span class="mut">${esc(prev.key)}</span>): sold ${sg(v.dSold)} t/day${v.dProfit != null ? ', profit ' + d$(v.dProfit) + '/day' : ''}. Verdict: <b>${v.call}</b> <span class="mut">(normal day-to-day swing about ±${t(v.se * 1.5)} t)</span>.</div>`;
+    }
+    if (cc.notes.length || cc.over.length) {
+      h += `<h3>Costs</h3>${cc.notes.map(n => `<div class="rec w">${esc(n)}</div>`).join('')}`;
+      if (cc.over.length) h += `<p class="mut">Paid more than ${cc.mult}× their highest working stat:</p><div class="sc"><table><tr><th class="l">Employee</th><th class="l">Role</th><th>Wage</th><th>${cc.mult}× formula</th><th>Over by</th></tr>${cc.over.map(x =>
+        `<tr><td class="l">${esc(x.e.name)}</td><td class="l">${esc(x.e.position)}</td><td>${m$(x.w)}</td><td>${m$(x.f)}</td><td class="neg">${m$(x.w - x.f)}</td></tr>`).join('')}</table></div>`;
+    }
+    h += `<h3>Results by setup</h3><div class="sc"><table><tr><th class="l">Setup</th><th class="l">Dates</th><th>Days</th><th>Avg sold</th><th>Avg made</th><th>Avg profit</th></tr>` +
+      per.slice(-8).reverse().map(p => `<tr class="${p === cur ? 'cur' : ''}"><td class="l">${p.key ? esc(p.key) : '<span class="mut">setup unknown</span>'}</td><td class="l">${esc(p.from)}${p.to !== p.from ? ' to ' + esc(p.to) : ''}</td><td>${p.n}</td><td>${t(p.sold)}</td><td>${p.made ? t(p.made) : ''}</td><td>${p.profit != null ? m$(p.profit) : ''}</td></tr>`).join('') + `</table></div>
+      <h3>Fill in history</h3><p class="mut">The briefing logs a day each time you open the panel after the 18:10 TCT update. To fill gaps, copy the <b>Stock records</b> and <b>Company records</b> tables from your company page (select from the Date header to the last row), paste below and press Import. Pasting the same days again just updates them.</p>
+      <textarea id="amc-import" rows="5" style="width:100%;background:#141917;color:#e6ebe8;border:1px solid #2f3835;border-radius:4px;font:12px monospace" placeholder="Paste Stock records and/or Company records here"></textarea>
+      <p><button class="act" data-act="import">Import</button> <span class="mut" id="amc-import-msg"></span></p>
+      <p class="mut">Rules: add a Sales Executive when stock covers 25+ days or the cap is under 20 days away; move one back when stock runs out within 10 days; otherwise hold, and judge each change after 3 logged days. The advisor suggests; you make the change in Torn.</p>`;
+    return h;
+  }
+
+  // Parse pasted Torn "Stock records" / "Company records" tables.
+  function importRecords(text) {
+    const num = v => { const m = String(v || '').replace(/,/g, '').match(/[-+]?\d+(\.\d+)?/); return m ? +m[0] : null; };
+    const stockRows = [], compRows = [];
+    String(text).split(/\r?\n/).forEach(line => {
+      const m = line.match(/^\s*(\d{4})\/(\d{2})\/(\d{2})/); if (!m) return;
+      const day = `${m[1]}-${m[2]}-${m[3]}`;
+      const cells = line.includes('\t') ? line.split('\t').map(x => x.trim()) : line.trim().split(/\s{2,}/);
+      if (/salt|\(ton\)/i.test(line) && cells.length >= 11) {
+        stockRows.push({ day, emp: num(cells[2]), pos: cells[3], price: num(cells[6]), sold: num(cells[7]), stock: num(cells[9]), made: num(cells[10]) });
+      } else if (cells.length >= 10 && /^\$/.test(cells[2])) {
+        compRows.push({ day, emp: num(cells[1]), ads: num(cells[2]) / 1e6, env: num(cells[5]), customers: num(cells[7]), income: num(cells[8]), profit: num(cells[9]) });
+      }
+    });
+    // Rebuild full role counts: full listings set them, "+1/-1" rows change them.
+    stockRows.sort((a, b) => a.day < b.day ? -1 : 1);
+    let counts = null;
+    const map = { SE: 'se', Se: 'sec', MO: 'mo', ME: 'me', PF: 'pf', El: 'el', SM: 'sm', SI: 'si' };
+    stockRows.forEach(r => {
+      const toks = [...String(r.pos).matchAll(/\b(SE|Se|MO|ME|PF|El|SM|SI|TOT|Un)\s*:\s*([+-]?\d+)/g)];
+      const isDelta = toks.some(x => /^[+-]/.test(x[2]));
+      if (!isDelta && toks.length) { counts = { se: 0, sec: 0, mo: 0, me: 0, pf: 0, el: 0, sm: 0, si: 0 }; toks.forEach(([, k, v]) => { if (map[k]) counts[map[k]] = +v; }); }
+      else if (counts) toks.forEach(([, k, v]) => { if (map[k]) counts[map[k]] += +v; });
+      const o = { sold: r.sold, made: r.made, stock: r.stock, price: r.price, emp: r.emp };
+      if (counts) Object.assign(o, { se: counts.se, sec: counts.sec, mo: counts.mo, me: counts.me });
+      snaps[r.day] = Object.assign({}, snaps[r.day] || {}, o, { src: (snaps[r.day] && snaps[r.day].src === 'api') ? 'api+paste' : 'paste' });
+    });
+    compRows.forEach(r => {
+      snaps[r.day] = Object.assign({}, snaps[r.day] || {}, { ads: r.ads, env: r.env, customers: r.customers, income: r.income, profit: r.profit, emp: r.emp,
+        wages: r.income != null && r.profit != null ? r.income - r.profit - r.ads * 1e6 : undefined });
+    });
+    const keep = Object.keys(snaps).sort().slice(-120); snaps = Object.fromEntries(keep.map(k => [k, snaps[k]]));
+    set('snaps', snaps);
+    return { stock: stockRows.length, comp: compRows.length, setups: stockRows.filter(r => snaps[r.day].se != null).length };
+  }
+
   // ---- Settings
   function viewSettings() {
     const m = cfg.model;
@@ -566,6 +714,7 @@ function hungarian(c) {
       <h3>Effectiveness</h3><label>Education bonus (0 = fit automatically)<input type="number" step="0.005" data-cfg="bonus" value="${cfg.bonus}"></label>
       <label>Minimum gain to suggest a change (weighted EE)<input type="number" step="0.5" data-cfg="minGain" value="${cfg.minGain}"></label>
       <label>Minimum EE for support roles<input type="number" step="1" data-cfg="floor" value="${cfg.floor}"></label>
+      <label>Wage formula: × highest working stat<input type="number" step="1" data-cfg="wageMult" value="${cfg.wageMult || 20}"></label>
       <p class="mut">Support roles with a minimum: ${Object.keys(REQ).map(r => `<label style="flex-direction:row;align-items:center;gap:4px"><input type="checkbox" data-floorrole="${r}" ${(cfg.floorRoles || []).includes(r) ? 'checked' : ''}>${ROLE_NAMES[r]}</label>`).join('')}</p>
       <h3>Locked roles</h3><p class="mut">Holders of these roles are never moved. Site Manager (Manager special) and Safety Inspector (Cleaner special) are locked by default.</p>
       <p>${Object.keys(REQ).map(r => `<label style="flex-direction:row;align-items:center;gap:4px"><input type="checkbox" data-lockrole="${r}" ${(cfg.lockRoles || []).includes(r) ? 'checked' : ''}>${ROLE_NAMES[r]}</label>`).join('')}</p>
@@ -586,6 +735,11 @@ function hungarian(c) {
     else if (b.dataset.act === 'fit') doFit();
     else if (b.dataset.act === 'applyfit') { const f = box.querySelector('#amc-fit')._fit; if (f) { Object.assign(cfg.model, { D0: Math.round(f.D0), adA: f.A, adK: f.K, elast: f.E }); saveCfg(); render(); } }
     else if (b.dataset.act === 'resetw') { cfg.weights = Object.assign({}, DEF_W); cfg.lockRoles = DEF.lockRoles.slice(); cfg.locks = {}; cfg.minGain = DEF.minGain; cfg.floor = DEF.floor; cfg.floorRoles = DEF.floorRoles.slice(); saveCfg(); render(); }
+    else if (b.dataset.act === 'import') {
+      const ta = box.querySelector('#amc-import'); const r = importRecords(ta ? ta.value : '');
+      render(); const msg = box.querySelector('#amc-import-msg');
+      if (msg) msg.textContent = `Imported ${r.stock} stock row(s) and ${r.comp} company row(s); setup known for ${r.setups} day(s).`;
+    }
     else if (b.dataset.act === 'clearhist') { snaps = {}; eeHist = {}; set('snaps', snaps); set('eeHist', eeHist); render(); }
   });
   box.addEventListener('change', e => {

@@ -37,6 +37,7 @@ Make role changes in small steps and check the next day's income before making m
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.0 | 19 Nov 2026 | New **Briefing** tab (opens first): recommended next move from stock runway and the role-mix model (add a Sales Executive at 25+ days of stock, cut one under 10, otherwise hold), verdict on the last setup change after 3 logged days, results grouped by setup, daily cost jumps and staff paid above the wage formula (default 20x highest working stat, set in Settings). Paste Torn's Stock records and Company records to fill in history. |
 | 2.1.0 | 19 Nov 2026 | New **Role mix** tab: re-runs the allocation for 3 to 6 Sales Executives and shows tonnes made vs demand, income while stock lasts and steady income. Production now uses Mill Operator EE and the Mine Engineer instead of a flat 920 t per MO; demand rises with Sales Executive EE. Stock runway banner (days to empty or to the 40,000 t cap). New **Trains** tab: who gains most EE per company train. |
 | 2.0.3 | 11 Nov 2026 | Only suggests a change if it adds at least 5 EE to Sales Executive + Secretary (minimum gain 50 weighted); smaller gains are within estimate error. |
 | 2.0.2 | 8 Nov 2026 | Total EE no longer counts the Site Manager's management boost, which only applies to underperformers and was inflating some people's scores in other roles. |
