@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.2
+// @version      1.3
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -21,9 +21,10 @@
 
   // ---------- Settings ----------
   const POLL_MS = 30000;            // API refresh: every 30 s (2 calls/min, well under the 100/min key limit)
+  if (GM_getValue('awb_ver', 0) < 13) { GM_setValue('awb_enemy', ''); GM_setValue('awb_ver', 13); }
   const S = {
     key:         GM_getValue('awb_key', ''),
-    enemy:       GM_getValue('awb_enemy', ''),
+    enemy:       GM_getValue('awb_enemy', ''),     // manual override; blank = your current ranked war opponent (from the API)
     count:       GM_getValue('awb_count', 3),      // how many targets go in the chat message
     windowMin:   GM_getValue('awb_window', 0),     // only show hospital targets out within N minutes (0 = show all)
     includeOkay: GM_getValue('awb_okay', true),    // list enemies already out (Okay) at the top
@@ -92,12 +93,54 @@
     return [];
   }
 
+  // ---------- Who are we fighting? ----------
+  // Blank enemy ID = ask the API for your own faction's current ranked war. Never guessed from the page.
+  let enemyId = '', enemySource = '', warCheckedAt = 0;
+  const RW_RECHECK = 300; // seconds between ranked-war look-ups
+
+  function pickRankedWar(wars, ownId) {
+    // wars: [{start, end, factions:[{id,name}]}]
+    const t = now();
+    const live = wars.filter(w => !w.end || w.end > t).sort((a, b) => b.start - a.start);
+    if (!live.length) return null;
+    const other = live[0].factions.find(f => String(f.id) !== String(ownId));
+    return other ? { id: String(other.id), name: other.name || '' } : null;
+  }
+
+  async function findRankedEnemy() {
+    try { // API v1: own faction basic includes ranked_wars
+      const j = await api(`https://api.torn.com/faction/?selections=basic&key=${S.key}&comment=ArcherWarBoard`);
+      const wars = Object.values(j.ranked_wars || {}).map(w => ({
+        start: (w.war && w.war.start) || 0, end: (w.war && w.war.end) || 0,
+        factions: Object.entries(w.factions || {}).map(([id, f]) => ({ id, name: f.name })),
+      }));
+      if (j.ID || j.id) return pickRankedWar(wars, j.ID || j.id);
+    } catch (e) { /* fall through to v2 */ }
+    const b = await api(`https://api.torn.com/v2/faction/basic?key=${S.key}&comment=ArcherWarBoard`);
+    const w = await api(`https://api.torn.com/v2/faction/wars?key=${S.key}&comment=ArcherWarBoard`);
+    const r = w.wars && w.wars.ranked;
+    const list = (Array.isArray(r) ? r : r ? [r] : []).map(x => ({ start: x.start || 0, end: x.end || 0, factions: x.factions || [] }));
+    return pickRankedWar(list, b.basic && b.basic.id);
+  }
+
+  async function resolveEnemy() {
+    if (S.enemy) { enemySource = 'manual'; return S.enemy; }
+    if (enemyId && enemySource === 'auto' && now() - warCheckedAt < RW_RECHECK) return enemyId;
+    warCheckedAt = now();
+    const e = await findRankedEnemy();
+    enemySource = 'auto';
+    return e ? e.id : '';
+  }
+
   async function refresh() {
-    if (!S.key || !S.enemy) { lastError = 'Enter your Public API key and the enemy faction ID in ⚙.'; render(); return; }
+    if (!S.key) { lastError = 'Enter your Public API key in ⚙.'; render(); return; }
     try {
+      const id = await resolveEnemy();
+      if (!id) { enemyId = ''; members = []; factionName = ''; lastError = 'No active ranked war found. Enter the enemy faction ID in ⚙.'; render(); return; }
+      if (id !== enemyId) { enemyId = id; members = []; factionName = ''; }
       let j;
-      try { j = await api(`https://api.torn.com/faction/${S.enemy}?selections=basic&key=${S.key}&comment=ArcherWarBoard`); }
-      catch (e1) { j = await api(`https://api.torn.com/v2/faction/${S.enemy}/members?key=${S.key}&comment=ArcherWarBoard`); }
+      try { j = await api(`https://api.torn.com/faction/${id}?selections=basic&key=${S.key}&comment=ArcherWarBoard`); }
+      catch (e1) { j = await api(`https://api.torn.com/v2/faction/${id}/members?key=${S.key}&comment=ArcherWarBoard`); }
       members = parseMembers(j);
       if (j.name) factionName = j.name;
       lastFetch = now();
@@ -107,6 +150,7 @@
     }
     render();
   }
+
 
   // ---------- Target list ----------
   function targets() {
@@ -157,15 +201,7 @@
     }
   }
 
-  // ---------- Enemy ID detection (best effort; manual entry always works) ----------
-  function detectEnemy() {
-    const url = new URL(location.href);
-    const fromUrl = url.searchParams.get('ID');
-    if (fromUrl && /^\d+$/.test(fromUrl)) return fromUrl;
-    const link = document.querySelector('[class*="opponent" i] a[href*="factions.php?step=profile"], [class*="enemy" i] a[href*="factions.php?step=profile"]');
-    if (link) { const m = /ID=(\d+)/.exec(link.href); if (m) return m[1]; }
-    return '';
-  }
+
 
   // ---------- UI ----------
   const css = `
@@ -208,7 +244,7 @@
     </div>
     <div class="cfg">
       <label>Public API key <input type="password" data-k="key"></label>
-      <label>Enemy faction ID <span><input type="text" data-k="enemy" style="width:90px"> <button data-a="detect">Detect</button></span></label>
+      <label>Enemy faction ID (blank = auto) <input type="text" data-k="enemy" style="width:90px" placeholder="auto"></label>
       <label>Targets per message <input type="number" min="1" max="10" data-k="count"></label>
       <label>Only out within (min, 0 = all) <input type="number" min="0" max="600" data-k="windowMin"></label>
       <label>Show enemies already out <input type="checkbox" data-k="includeOkay"></label>
@@ -289,12 +325,6 @@
       case 'send': sendToChat(); break;
       case 'min': S.collapsed = !S.collapsed; box.classList.toggle('collapsed', S.collapsed); save(); break;
       case 'cfg': loadCfg(); cfg.style.display = cfg.style.display === 'block' ? 'none' : 'block'; break;
-      case 'detect': {
-        const id = detectEnemy();
-        if (id) { cfg.querySelector('[data-k=enemy]').value = id; toast(`Found faction ${id}. Check it, then Save.`); }
-        else toast('Could not detect. Open the enemy faction profile or type the ID.');
-        break;
-      }
       case 'save':
         cfg.querySelectorAll('[data-k]').forEach(i => {
           const k = i.dataset.k;
@@ -303,14 +333,14 @@
           else S[k] = i.value.trim();
         });
         if (S.count < 1) S.count = 3;
-        save(); cfg.style.display = 'none'; members = []; factionName = ''; refresh();
+        save(); cfg.style.display = 'none'; members = []; factionName = ''; enemyId = ''; warCheckedAt = 0; refresh();
         break;
     }
   });
 
   function render() {
     const t = now();
-    box.querySelector('header b').textContent = factionName ? `⚔️ ${factionName}` : '⚔️ War Board';
+    box.querySelector('header b').textContent = factionName ? `⚔️ ${factionName}${enemySource === 'manual' ? ' (manual)' : ''}` : '⚔️ War Board';
     box.querySelector('.n').textContent = S.count;
     const body = box.querySelector('.body');
     if (lastError) { body.innerHTML = `<div class="muted" style="padding:6px 0">${esc(lastError)}</div>`; }
@@ -333,7 +363,6 @@
   }
 
   // ---------- Loop ----------
-  if (!S.enemy) { const id = detectEnemy(); if (id) { S.enemy = id; save(); } }
   refresh();
   setInterval(() => { if (!document.hidden && !S.collapsed) refresh(); }, POLL_MS);
   // ---------- Countdowns in Torn's own member list ----------
@@ -360,9 +389,17 @@
       if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
       const mId = /XID=(\d+)/.exec(a.href); if (!mId) return;
       const m = byId.get(+mId[1]); if (!m) return;
-      const row = a.closest('li, tr, [class*="row" i], [class*="member" i]'); if (!row || seen.has(row)) return;
-      seen.add(row);
-      const cell = findStatusCell(row); if (!cell) return;
+      // Walk up from the name link to the largest element that still belongs to this one player
+      // (stop before an ancestor that holds a different player's link), then look for the status cell there.
+      let row = a, up = a.parentElement;
+      for (let i = 0; up && i < 10 && up !== document.body; i++, up = up.parentElement) {
+        const ids = new Set([...up.querySelectorAll('a[href*="profiles.php?XID="]')].map(x => (/XID=(\d+)/.exec(x.href) || [])[1]));
+        if (ids.size > 1) break;
+        row = up;
+      }
+      const cell = findStatusCell(row);
+      if (!cell || seen.has(cell)) return;
+      seen.add(cell);
       let text, cls;
       if (m.state === 'Hospital') {
         const left = m.until - t;

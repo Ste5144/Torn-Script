@@ -169,14 +169,15 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 A floating panel on faction pages listing the enemy faction's members, with live hospital countdowns. Enemies already out are shown first, then everyone in hospital in order of who comes out soonest. Each row has a ⚔ link to that player's attack page.
 
 - **📢 Next 3 to chat** builds one message with the next targets, their release time (countdown and TCT clock time) and attack links. Click into faction chat first and the message is placed in the chat box; you press **Enter** yourself. If the chat box can't be found, the message is copied so you can paste it.
-- **⚙ settings:** Public API key, enemy faction ID (**Detect** reads it from the enemy's faction profile URL), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
-- Countdowns also replace the **Hospital** text in the page's own member list (faction profile and war pages) for the enemy faction set in ⚙. Turn this off in ⚙ if another script already does it.
+- **⚙ settings:** Public API key, enemy faction ID (leave blank and it uses your faction's current ranked war opponent from the API; type an ID to override), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
+- Countdowns also replace the **Hospital** text in the page's own member list (faction profile and war pages) for the enemy faction. Turn this off in ⚙ if another script already does it.
 - Countdowns turn orange in the last two minutes.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 30 seconds while the panel is open (2 calls a minute).
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3 | 20 Nov 2026 | Countdowns now appear in the ranked war member list. Enemy faction taken from your current ranked war via the API (page guessing removed; it could pick a territory-war faction). Clears any previously saved enemy ID once. |
 | 1.2 | 20 Nov 2026 | Countdowns shown in the page's own Hospital status cells, not just the panel. |
 | 1.1 | 20 Nov 2026 | Panel can be dragged and remembers its position; notices follow the panel. |
 | 1.0 | 20 Nov 2026 | First version. |
