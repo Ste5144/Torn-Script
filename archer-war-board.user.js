@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.7
+// @version      1.8
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_setClipboard
+// @grant        GM_notification
 // @connect      api.torn.com
 // @run-at       document-idle
 // @author       SterlingArcher
@@ -34,6 +35,13 @@
     pageSort:    GM_getValue('awb_pagesort', false), // re-order the page's enemy list by hospital time
     collapsed:   GM_getValue('awb_collapsed', false),
     inline:      GM_getValue('awb_inline', true),     // put countdowns in Torn's own Hospital status cells
+    myStats:     GM_getValue('awb_mystats', ''),      // your total battle stats, e.g. 2.5b (for BSP colouring)
+    hideRed:     GM_getValue('awb_hidered', false),   // hide targets BSP says are much stronger than you
+    alertSec:    GM_getValue('awb_alertsec', 10),     // watch-list alert this many seconds before release
+    sound:       GM_getValue('awb_sound', true),      // beep for watch-list and chain alerts
+    notify:      GM_getValue('awb_notify', true),     // browser notification for watch-list alerts
+    chainWarn:   GM_getValue('awb_chainwarn', 60),    // warn when your chain timer is below N seconds (0 = off)
+    calledMin:   GM_getValue('awb_calledmin', 3),     // skip targets already posted to chat for N minutes (0 = off)
   };
   const save = () => {
     GM_setValue('awb_key', S.key);
@@ -46,6 +54,13 @@
     GM_setValue('awb_pagesort', S.pageSort);
     GM_setValue('awb_collapsed', S.collapsed);
     GM_setValue('awb_inline', S.inline);
+    GM_setValue('awb_mystats', S.myStats);
+    GM_setValue('awb_hidered', S.hideRed);
+    GM_setValue('awb_alertsec', S.alertSec);
+    GM_setValue('awb_sound', S.sound);
+    GM_setValue('awb_notify', S.notify);
+    GM_setValue('awb_chainwarn', S.chainWarn);
+    GM_setValue('awb_calledmin', S.calledMin);
   };
 
   // ---------- State ----------
@@ -58,6 +73,12 @@
   let lastFetch = 0;
   let lastError = '';
   let lastChatBox = null;  // the chat textarea you last clicked into
+  const watch = new Set(GM_getValue('awb_watch', []).map(String));  // starred player ids
+  const alerted = new Map();  // player id -> release time we already alerted for
+  const called = new Map();   // player id -> {at, until} when posted to chat
+  const travelSeen = new Map(); // player id -> {desc, since} first time we saw this trip
+  let chain = null;           // {current, max, timeout, cooldown, at}
+  let chainAlertedAt = 0;
 
   const now = () => Math.floor(Date.now() / 1000) + offset;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -97,6 +118,8 @@
       state: (m.status && m.status.state) || 'Unknown',
       until: (m.status && m.status.until) || 0,
       desc: (m.status && m.status.description) || '',
+      act: ((m.last_action && m.last_action.status) || '').toLowerCase(),        // online / idle / offline
+      actRel: (m.last_action && m.last_action.relative) || '',
     });
     if (Array.isArray(j.members)) return j.members.map(m => norm(m.id, m));                       // API v2
     if (j.members && typeof j.members === 'object') return Object.entries(j.members).map(([id, m]) => norm(id, m)); // API v1
@@ -176,6 +199,8 @@
       });
       if (j.name) factionName = j.name;
       lastFetch = now();
+      trackTravel();
+      fetchChain();
       lastError = members.length ? '' : 'No members returned. Check the faction ID.';
     } catch (e) {
       lastError = e.message;
@@ -184,6 +209,103 @@
   }
 
 
+  // ---------- Your chain (own faction; Public key) ----------
+  async function fetchChain() {
+    if (!S.chainWarn) { chain = null; return; }
+    try {
+      let c;
+      try { c = (await api(`https://api.torn.com/faction/?selections=chain&key=${S.key}&comment=ArcherWarBoard&timestamp=${now()}`)).chain; }
+      catch (e) { c = (await api(`https://api.torn.com/v2/faction/chain?key=${S.key}&comment=ArcherWarBoard`)).chain; }
+      if (c) chain = { current: c.current || 0, max: c.max || 0, timeout: c.timeout || 0, cooldown: c.cooldown || 0, at: now() };
+    } catch (e) { /* chain is optional */ }
+  }
+  const chainLeft = () => chain ? Math.max(0, chain.timeout - (now() - chain.at)) : 0;
+
+  // ---------- Travellers ----------
+  const seenHome = new Set();  // ids we have seen not travelling, so a later trip start time is real
+  function trackTravel() {
+    const t = now();
+    members.forEach(m => {
+      if (m.state === 'Traveling' || m.state === 'Abroad') {
+        const prev = travelSeen.get(m.id);
+        if (!prev || prev.desc !== m.desc) travelSeen.set(m.id, { desc: m.desc, since: t, known: !!prev || seenHome.has(m.id) });
+      } else { travelSeen.delete(m.id); seenHome.add(m.id); }
+    });
+  }
+
+  // ---------- BSP vs your stats ----------
+  function parseBig(txt) {
+    const m = /^\s*([\d.,]+)\s*([kmbtq]?)\s*$/i.exec(String(txt || '')); if (!m) return 0;
+    const mult = { '': 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 }[m[2].toLowerCase()];
+    return parseFloat(m[1].replace(/,/g, '')) * mult;
+  }
+  function bspClass(id) {
+    const mine = parseBig(S.myStats), theirs = parseBig(bsp.get(String(id)));
+    if (!mine || !theirs) return '';
+    const r = theirs / mine;
+    return r <= 0.8 ? 'g' : r <= 1.25 ? 'a' : 'r';
+  }
+
+  // ---------- Called targets ----------
+  function isCalled(m, t) {
+    const c = called.get(m.id);
+    if (!c || !S.calledMin) return false;
+    if (t - c.at > S.calledMin * 60) { called.delete(m.id); return false; }
+    if (inHosp(m, t) && (m.pending ? c.until !== -1 : m.until > c.until + 5)) { called.delete(m.id); return false; } // hit since the call
+    return true;
+  }
+
+  // ---------- Alerts ----------
+  let audio = null;
+  function beep(times = 1) {
+    if (!S.sound) return;
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      for (let i = 0; i < times; i++) {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+        const st = audio.currentTime + i * 0.25;
+        g.gain.setValueAtTime(0.15, st); g.gain.exponentialRampToValueAtTime(0.001, st + 0.18);
+        o.start(st); o.stop(st + 0.2);
+      }
+    } catch (e) { /* sound blocked until you click the page once */ }
+  }
+  function notifyUser(title, text) {
+    if (!S.notify) return;
+    try { GM_notification({ title, text, timeout: 8000 }); } catch (e) { /* notifications not allowed */ }
+  }
+  const prevState = new Map();
+  function checkAlerts() {
+    const t = now();
+    members.forEach(m => {
+      const was = prevState.get(m.id); prevState.set(m.id, m.state);
+      if (!watch.has(String(m.id)) || m.pending) return;
+      let msg = '';
+      if (m.state === 'Hospital') {
+        const left = m.until - t;
+        if (left <= S.alertSec && left > -5 && alerted.get(m.id) !== m.until) {
+          alerted.set(m.id, m.until);
+          msg = left > 0 ? `out in ${left}s` : 'is out';
+        }
+      } else if (m.state === 'Okay' && was === 'Hospital') {
+        if (typeof alerted.get(m.id) !== 'number') msg = 'is out';   // released early (revive or meds), not already announced
+        alerted.delete(m.id);
+      }
+      if (msg) {
+        beep(2);
+        notifyUser(`★ ${m.name} ${msg}`, 'Open War Board and click Attack.');
+        toast(`★ ${m.name} ${msg}`);
+      }
+    });
+    // chain
+    if (chain && S.chainWarn && chain.current >= 10 && !chain.cooldown) {
+      const left = chainLeft();
+      if (left > 0 && left <= S.chainWarn && t - chainAlertedAt > S.chainWarn) {
+        chainAlertedAt = t; beep(3); toast(`⛓ Chain ${chain.current}: ${fmtLeft(left)} left. Hit someone!`);
+      }
+    }
+  }
+
   // ---------- Target list ----------
   function targets() {
     const t = now();
@@ -191,21 +313,26 @@
       ? members.filter(m => m.state === 'Okay' || (m.state === 'Hospital' && !inHosp(m, t)))
       : [];
     let hosp = members.filter(m => inHosp(m, t));
+    if (S.hideRed) hosp = hosp.filter(m => bspClass(m.id) !== 'r');
     if (S.windowMin > 0) hosp = hosp.filter(m => m.pending || m.until - t <= S.windowMin * 60);
     const key = m => m.pending ? Infinity : m.until;
     hosp.sort((a, b) => key(a) - key(b));
     okay.sort((a, b) => b.level - a.level);
-    return [...okay, ...hosp];
+    const ok2 = S.hideRed ? okay.filter(m => bspClass(m.id) !== 'r') : okay;
+    return [...ok2, ...hosp];
   }
 
+  let lastMessageIds = [];
   function buildMessage() {
     const t = now();
-    const list = targets().slice(0, Math.max(1, S.count));
+    const list = targets().filter(m => !isCalled(m, t)).slice(0, Math.max(1, S.count));
+    lastMessageIds = list;
     if (!list.length) return '';
     const lines = list.map((m, i) => {
       const when = !inHosp(m, t) ? 'OUT NOW' : m.pending ? 'in hospital (time updating)' : `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})`;
       const b = bsp.get(String(m.id));
-      return { head: `${i + 1}. ${m.name}${b ? ` [BSP ${b}]` : ''} · ${when}`, link: attackUrl(m.id) };
+      const act = m.act === 'offline' ? ' · offline' : m.act === 'idle' ? ' · idle' : m.act === 'online' ? ' · online' : '';
+      return { head: `${i + 1}. ${m.name}${b ? ` [BSP ${b}]` : ''} · ${when}${act}`, link: attackUrl(m.id) };
     });
     if (S.multiLine) {
       // One target per block: name and release time on one line, attack link underneath.
@@ -224,8 +351,13 @@
 
   function sendToChat() {
     const msg = buildMessage();
-    if (!msg) { toast('No targets match the current filter.'); return; }
+    if (!msg) {
+      toast(targets().length ? `Every listed target was already called in the last ${S.calledMin} min.` : 'No targets match the current filter.');
+      return;
+    }
     GM_setClipboard(msg, 'text');
+    const tc = now();
+    lastMessageIds.forEach(m => called.set(m.id, { at: tc, until: m.pending ? -1 : m.until }));
     const box = lastChatBox && document.contains(lastChatBox) ? lastChatBox : null;
     if (box) {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -264,6 +396,16 @@
     #awb .cfg label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;gap:6px}
     #awb .cfg input[type=text],#awb .cfg input[type=password],#awb .cfg input[type=number]{width:140px;background:#111;color:#eee;border:1px solid #555;border-radius:3px;padding:2px 4px}
     #awb.collapsed .body,#awb.collapsed .foot,#awb.collapsed .cfg{display:none!important}
+    #awb .chain{display:none;padding:4px 8px;border-bottom:1px solid #333;font-weight:bold}
+    #awb .chain.warn{background:#7a1c1c;animation:awbflash 1s infinite}
+    @keyframes awbflash{50%{background:#b71c1c}}
+    #awb .trav{padding:0 8px 4px;font-size:11px}
+    #awb .trav:empty{display:none}
+    #awb .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;background:#555}
+    #awb .dot.online{background:#43a047}#awb .dot.idle{background:#fbc02d}#awb .dot.offline{background:#757575}
+    #awb .star{cursor:pointer;color:#666;user-select:none}#awb .star.on{color:#ffd54f}
+    #awb .bsp.g{background:#2e7d32!important}#awb .bsp.a{background:#f9a825!important;color:#000!important}
+    #awb .row.called{opacity:.55}#awb .row.called .nm::after{content:" 📢";font-size:10px}
     .awb-inl{font-family:monospace!important;font-weight:bold!important}
     .awb-inl.awb-h{color:#ff6b6b!important}.awb-inl.awb-s{color:#ffb84d!important}.awb-inl.awb-o{color:#6bdc6b!important}
     #awb-toast{position:fixed;right:12px;bottom:calc(70vh + 24px);z-index:100000;background:#333;color:#fff;padding:6px 10px;border-radius:4px;font:12px Arial;opacity:0;transition:opacity .2s}
@@ -278,7 +420,9 @@
       <button data-a="refresh" title="Refresh now">↻</button>
       <button data-a="cfg" title="Settings">⚙</button>
       <button data-a="min" title="Collapse">–</button></header>
+    <div class="chain"></div>
     <div class="body"></div>
+    <div class="trav"></div>
     <div class="foot">
       <button class="send" data-a="send">📢 Next <span class="n"></span> to chat</button>
       <span class="muted status"></span>
@@ -292,6 +436,13 @@
       <label>Open attacks in a new tab <input type="checkbox" data-k="newTab"></label>
       <label>Chat message on separate lines <input type="checkbox" data-k="multiLine"></label>
       <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
+      <label>Your total battle stats (e.g. 2.5b) <input type="text" data-k="myStats" style="width:90px" placeholder="for BSP colours"></label>
+      <label>Hide targets much stronger than you <input type="checkbox" data-k="hideRed"></label>
+      <label>★ alert seconds before release <input type="number" min="0" max="300" data-k="alertSec"></label>
+      <label>Alert sound <input type="checkbox" data-k="sound"></label>
+      <label>★ browser notification <input type="checkbox" data-k="notify"></label>
+      <label>Chain warning below (s, 0 = off) <input type="number" min="0" max="300" data-k="chainWarn"></label>
+      <label>Skip already-called targets (min, 0 = off) <input type="number" min="0" max="30" data-k="calledMin"></label>
       <button data-a="save">Save</button>
     </div>`;
   document.body.appendChild(box);
@@ -362,6 +513,14 @@
   }
 
   box.addEventListener('click', e => {
+    const star = e.target.closest('[data-star]');
+    if (star) {
+      const id = star.dataset.star;
+      if (watch.has(id)) watch.delete(id); else watch.add(id);
+      GM_setValue('awb_watch', [...watch]);
+      beep(0); // unlocks sound after a click
+      render(); return;
+    }
     const a = e.target.closest('[data-a]'); if (!a) return;
     switch (a.dataset.a) {
       case 'refresh': refresh(); break;
@@ -385,6 +544,34 @@
     }
   });
 
+  function renderChain(t) {
+    const el = box.querySelector('.chain');
+    if (!chain || !S.chainWarn || !chain.current || chain.cooldown) { el.style.display = 'none'; return; }
+    const left = chainLeft();
+    el.style.display = 'block';
+    const warn = left > 0 && left <= S.chainWarn;
+    el.classList.toggle('warn', warn);
+    const best = targets().find(m => !inHosp(m, t));
+    const txt = `⛓ Chain ${chain.current}/${chain.max} · ${fmtLeft(left)}`;
+    const sig = txt.split(' · ')[0] + '|' + warn + '|' + (warn && best ? best.id : '');
+    if (el.dataset.sig !== sig) {
+      el.dataset.sig = sig;
+      el.innerHTML = `<span class="ct"></span>${warn && best ? ` · next: <a class="atk" href="${attackUrl(best.id)}"${S.newTab ? ' target="_blank"' : ''}>${esc(best.name)}</a>` : ''}`;
+    }
+    const ct = el.querySelector('.ct'); if (ct.textContent !== txt) ct.textContent = txt;
+  }
+
+  function renderTravel(t) {
+    const el = box.querySelector('.trav');
+    const list = members.filter(m => travelSeen.has(m.id));
+    const html = list.length ? `<div class="muted" style="margin-top:4px">✈ Travelling / abroad (${list.length})</div>` + list.map(m => {
+      const tr = travelSeen.get(m.id);
+      const since = tr.known ? ` · seen ${fmtTct(tr.since).substr(0, 5)} TCT` : '';
+      return `<div><span class="dot ${m.act || ''}"></span><a href="${profileUrl(m.id)}" target="_blank" style="color:#9cf">${esc(m.name)}</a> <span class="muted">${esc(m.desc)}${since}</span></div>`;
+    }).join('') : '';
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
   let lastSig = '';
   function render() {
     const t = now();
@@ -401,7 +588,7 @@
         lastSig = sig;
         const tgt = S.newTab ? ' target="_blank"' : '';
         body.innerHTML = list.length ? list.map(m => `<div class="row" data-id="${m.id}">
-          <span class="nm"><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="bsp"></span> <span class="muted">L${m.level}</span></span>
+          <span class="nm"><span class="star" data-star="${m.id}" title="Watch: alert before release">☆</span> <span class="dot"></span><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="bsp"></span> <span class="muted">L${m.level}</span></span>
           <span class="t"></span>
           <a class="atk" href="${attackUrl(m.id)}"${tgt} title="Attack ${esc(m.name)}">Attack</a></div>`).join('')
           : '<div class="muted" style="padding:6px 0">No targets match the filter.</div>';
@@ -413,6 +600,12 @@
         const h = inHosp(m, t);
         const b = row.querySelector('.bsp'), bv = bsp.get(String(m.id)) || '';
         if (b.textContent !== bv) { b.textContent = bv; b.title = bv ? 'BSP estimate' : ''; }
+        b.className = 'bsp ' + bspClass(m.id);
+        const st = row.querySelector('.star'), on = watch.has(String(m.id));
+        if (st.classList.contains('on') !== on) { st.classList.toggle('on', on); st.textContent = on ? '★' : '☆'; }
+        const dot = row.querySelector('.dot');
+        dot.className = 'dot ' + (m.act || ''); dot.title = m.actRel ? `${m.act} · ${m.actRel}` : '';
+        row.classList.toggle('called', isCalled(m, t));
         const el = row.querySelector('.t');
         const text = !h ? 'OUT' : m.pending ? 'Hosp…' : fmtLeft(left);
         if (el.textContent !== text) el.textContent = text;
@@ -420,6 +613,8 @@
         el.title = m.desc || '';
       });
     }
+    renderChain(t);
+    renderTravel(t);
     const hospCount = members.filter(m => inHosp(m, t)).length;
     // A timer just ran out: refresh soon so a re-hospitalised player isn't left showing OUT.
     if (members.some(m => m.state === 'Hospital' && !m.pending && m.until <= t && m.until > t - 2)) requestRefresh();
@@ -584,6 +779,6 @@
     requestAnimationFrame(() => { paintQueued = false; paintInline(); });
   }).observe(document.body, { childList: true, subtree: true });
 
-  setInterval(() => { scanBspPage(); render(); paintInline(); sortPage(); }, 1000);
+  setInterval(() => { scanBspPage(); render(); paintInline(); sortPage(); checkAlerts(); }, 1000);
   scanBspStorage(); setInterval(scanBspStorage, POLL_MS);
 })();

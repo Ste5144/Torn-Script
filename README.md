@@ -174,11 +174,18 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - Countdowns turn orange in the last two minutes.
 - If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel and added to the chat message. It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
 - **⇅** re-orders the page's own enemy list by hospital time: enemies already out first, then soonest out, then travelling/jailed. Click again to go back to Torn's order. The button turns green while sorting is on.
+- **Online dot** before each name: green online, yellow idle, grey offline (hover for last action). Also added to the chat message.
+- **★ Watch list:** click the star next to a target. You get a beep, a browser notification and an on-screen notice when they are about to come out (10 s before by default) or are released early.
+- **Chain bar:** shows your faction's chain count and timer. Below 60 s (adjustable) it flashes, beeps and offers the best target that is out right now.
+- **BSP colours:** enter your total battle stats in ⚙ (e.g. `2.5b`). BSP badges turn green (weaker than you), amber (similar) or red (much stronger). Option to hide red targets.
+- **Travelling / abroad** list under the targets, with destination and, if the script saw them leave, the time they left.
+- **Called targets:** targets you have posted to chat are dimmed with 📢 and skipped by the next post for 3 minutes (adjustable), or until they are hit again.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 15 seconds while the panel is open, and early (at most every 4 seconds) when the page's live status changes or a timer runs out. If the page shows an enemy back in hospital before the API has the new time, they show as **Hosp…** rather than OUT.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.8 | 20 Nov 2026 | Online dots, ★ watch list alerts, chain timer warning, BSP colours against your stats, travellers list, and skipping of already-called targets. |
 | 1.7 | 20 Nov 2026 | No more false OUT: watches the page's live status column, marks re-hospitalised enemies straight away and refreshes early; refresh every 15 s; refresh when a timer runs out. |
 | 1.6.2 | 20 Nov 2026 | Attack button opens in a new tab by default, keeping the war page open. |
 | 1.6.1 | 20 Nov 2026 | Attack links use Torn's new address (`page.php?sid=attack`); the old `loader.php` one now returns an error. |
