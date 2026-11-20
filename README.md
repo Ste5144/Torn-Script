@@ -166,7 +166,7 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 
 ## War Board
 
-A floating panel on faction pages listing the enemy faction's members, with live hospital countdowns. Enemies already out are shown first, then everyone in hospital in order of who comes out soonest. Each row has a red **Attack** button that opens that player's attack page (same tab by default; new tab is an option in ⚙).
+A floating panel on faction pages listing the enemy faction's members, with live hospital countdowns. Enemies already out are shown first, then everyone in hospital in order of who comes out soonest. Each row has a red **Attack** button that opens that player's attack page (opens in a new tab; same tab is an option in ⚙).
 
 - **📢 Next 3 to chat** builds one message with the next targets, their release time (countdown and TCT clock time) and attack links. Click into faction chat first and the message is placed in the chat box; you press **Enter** yourself. If the chat box can't be found, the message is copied so you can paste it.
 - **⚙ settings:** Public API key, enemy faction ID (leave blank and it uses your faction's current ranked war opponent from the API; type an ID to override), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
@@ -179,6 +179,7 @@ A floating panel on faction pages listing the enemy faction's members, with live
 
 | Version | Date | Change |
 |---|---|---|
+| 1.6.2 | 20 Nov 2026 | Attack button opens in a new tab by default, keeping the war page open. |
 | 1.6.1 | 20 Nov 2026 | Attack links use Torn's new address (`page.php?sid=attack`); the old `loader.php` one now returns an error. |
 | 1.6 | 20 Nov 2026 | Shows each target's BSP figure (from your BSP script) in the panel and the chat message. ⇅ button sorts the page's enemy list by hospital time. |
 | 1.5 | 20 Nov 2026 | Neater chat message: numbered, one target per line with the attack link underneath, TCT release time first. Single-line layout available in ⚙. |

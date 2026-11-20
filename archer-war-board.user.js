@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.6.1
+// @version      1.6.2
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -22,13 +22,14 @@
   // ---------- Settings ----------
   const POLL_MS = 30000;            // API refresh: every 30 s (2 calls/min, well under the 100/min key limit)
   if (GM_getValue('awb_ver', 0) < 13) { GM_setValue('awb_enemy', ''); GM_setValue('awb_ver', 13); }
+  if (GM_getValue('awb_ver', 0) < 162) { GM_setValue('awb_newtab', true); GM_setValue('awb_ver', 162); }
   const S = {
     key:         GM_getValue('awb_key', ''),
     enemy:       GM_getValue('awb_enemy', ''),     // manual override; blank = your current ranked war opponent (from the API)
     count:       GM_getValue('awb_count', 3),      // how many targets go in the chat message
     windowMin:   GM_getValue('awb_window', 0),     // only show hospital targets out within N minutes (0 = show all)
     includeOkay: GM_getValue('awb_okay', true),    // list enemies already out (Okay) at the top
-    newTab:      GM_getValue('awb_newtab', false), // open attack links in a new tab
+    newTab:      GM_getValue('awb_newtab', true),  // open attack links in a new tab (untick in ⚙ for same tab)
     multiLine:   GM_getValue('awb_multiline', true), // chat message: one target per line
     pageSort:    GM_getValue('awb_pagesort', false), // re-order the page's enemy list by hospital time
     collapsed:   GM_getValue('awb_collapsed', false),
