@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.10
+// @version      1.11
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -43,6 +43,7 @@
     chainWarn:   GM_getValue('awb_chainwarn', 60),    // warn when your chain timer is below N seconds (0 = off)
     calledMin:   GM_getValue('awb_calledmin', 3),     // skip targets already posted to chat for N minutes (0 = off)
     showTravel:  GM_getValue('awb_showtravel', false), // travellers list expanded
+    bspChat:     GM_getValue('awb_bspchat', false), // include BSP figures in the chat message (off: BSP is a paid service; check its terms before sharing)
     rows:        GM_getValue('awb_rows', 12),         // target rows visible before scrolling (0 = as many as fit the screen)
   };
   const save = () => {
@@ -65,6 +66,7 @@
     GM_setValue('awb_calledmin', S.calledMin);
     GM_setValue('awb_showtravel', S.showTravel);
     GM_setValue('awb_rows', S.rows);
+    GM_setValue('awb_bspchat', S.bspChat);
   };
 
   // ---------- State ----------
@@ -336,7 +338,7 @@
       const when = !inHosp(m, t) ? 'OUT NOW' : m.pending ? 'in hospital (time updating)' : `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})`;
       const b = bsp.get(String(m.id));
       const act = m.act === 'offline' ? ' · offline' : m.act === 'idle' ? ' · idle' : m.act === 'online' ? ' · online' : '';
-      return { head: `${i + 1}. ${m.name}${b ? ` [BSP ${b}]` : ''} · ${when}${act}`, link: attackUrl(m.id) };
+      return { head: `${i + 1}. ${m.name}${b && S.bspChat ? ` [BSP ${b}]` : ''} · ${when}${act}`, link: attackUrl(m.id) };
     });
     if (S.multiLine) {
       // One target per block: name and release time on one line, attack link underneath.
@@ -463,6 +465,7 @@
       <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
       <label>Your total battle stats (e.g. 2.5b) <input type="text" data-k="myStats" style="width:90px" placeholder="for BSP colours"></label>
       <label>Hide targets much stronger than you <input type="checkbox" data-k="hideRed"></label>
+      <label title="BSP is a paid service; check its terms before posting its figures where others can see them">Include BSP figures in chat message <input type="checkbox" data-k="bspChat"></label>
       <label>★ alert seconds before release <input type="number" min="0" max="300" data-k="alertSec"></label>
       <label>Alert sound <input type="checkbox" data-k="sound"></label>
       <label>★ browser notification <input type="checkbox" data-k="notify"></label>
@@ -723,7 +726,7 @@
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (!/battlestatspredictor|bsp/i.test(k)) continue;
+        if (!/battlestatspredictor/i.test(k)) continue;   // BSP's own cache entries only
         const id = (/(\d{3,})\D*$/.exec(k) || [])[1];
         if (!id || bsp.has(id)) continue;
         let v; try { v = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }

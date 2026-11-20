@@ -172,7 +172,7 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - **⚙ settings:** Public API key, enemy faction ID (leave blank and it uses your faction's current ranked war opponent from the API; type an ID to override), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
 - Countdowns also replace the **Hospital** text in the page's own member list (faction profile and war pages) for the enemy faction. Turn this off in ⚙ if another script already does it.
 - Countdowns turn orange in the last two minutes.
-- If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel and added to the chat message. It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
+- If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel (and in the chat message if you turn that on in ⚙). It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
 - **⇅** re-orders the page's own enemy list by hospital time: enemies already out first, then soonest out, then travelling/jailed. Click again to go back to Torn's order. The button turns green while sorting is on.
 - **Online dot** before each name: green online, yellow idle, grey offline (hover for last action). Also added to the chat message.
 - **★ Watch list:** click the star next to a target. You get a beep, a browser notification and an on-screen notice when they are about to come out (10 s before by default) or are released early.
@@ -184,8 +184,24 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 15 seconds while the panel is open, and early (at most every 4 seconds) when the page's live status changes or a timer runs out. If the page shows an enemy back in hospital before the API has the new time, they show as **Hosp…** rather than OUT.
 
+- **BSP in chat** is off by default. BSP is a paid service, so check its terms before turning on **Include BSP figures in chat message** in ⚙. The figures always show in your own panel.
+- **One caller per war works best.** The "called" list is kept on your own screen only, so if several people post, they may post the same targets. Agree in the faction who posts.
+- Built for desktop browsers with Tampermonkey; Torn PDA on mobile may not support everything it uses.
+
+### Data and API key
+
+| | |
+|---|---|
+| Key access level | **Public** is all it needs. |
+| Key storage | Saved in Tampermonkey in your own browser. Sent only to `api.torn.com`, never anywhere else and never in this repository. |
+| Data read | Your faction's current ranked war and chain; the enemy faction's member list (names, levels, status, hospital times, last action). |
+| Data stored | Your settings, starred players and panel position, in Tampermonkey on your browser. Nothing is stored on any server. |
+| Data shared | Nothing is sent anywhere automatically. The chat message is only what you choose to post. |
+| Purpose | Showing hospital timers and helping you pick and call targets during wars. |
+
 | Version | Date | Change |
 |---|---|---|
+| 1.11 | 20 Nov 2026 | Ready to share: BSP figures left out of the chat message unless you turn them on; BSP cache lookup limited to BSP's own entries; README lists what data and API access the script uses. |
 | 1.10 | 20 Nov 2026 | Choose how many targets show before scrolling: ▲ fewer / more ▼ buttons under the list, or a number in ⚙ (0 = fit the screen). Default 12. |
 | 1.9 | 20 Nov 2026 | Compact one-line rows (about three times as many targets visible), green edge on targets that are out, gold tint on ★ targets, travellers list collapsed behind a click. |
 | 1.8 | 20 Nov 2026 | Online dots, ★ watch list alerts, chain timer warning, BSP colours against your stats, travellers list, and skipping of already-called targets. |
