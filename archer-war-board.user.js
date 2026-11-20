@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.1
+// @version      1.2
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -28,6 +28,7 @@
     windowMin:   GM_getValue('awb_window', 0),     // only show hospital targets out within N minutes (0 = show all)
     includeOkay: GM_getValue('awb_okay', true),    // list enemies already out (Okay) at the top
     collapsed:   GM_getValue('awb_collapsed', false),
+    inline:      GM_getValue('awb_inline', true),     // put countdowns in Torn's own Hospital status cells
   };
   const save = () => {
     GM_setValue('awb_key', S.key);
@@ -36,6 +37,7 @@
     GM_setValue('awb_window', S.windowMin);
     GM_setValue('awb_okay', S.includeOkay);
     GM_setValue('awb_collapsed', S.collapsed);
+    GM_setValue('awb_inline', S.inline);
   };
 
   // ---------- State ----------
@@ -186,6 +188,8 @@
     #awb .cfg label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;gap:6px}
     #awb .cfg input[type=text],#awb .cfg input[type=password],#awb .cfg input[type=number]{width:140px;background:#111;color:#eee;border:1px solid #555;border-radius:3px;padding:2px 4px}
     #awb.collapsed .body,#awb.collapsed .foot,#awb.collapsed .cfg{display:none!important}
+    .awb-inl{font-family:monospace!important;font-weight:bold!important}
+    .awb-inl.awb-h{color:#ff6b6b!important}.awb-inl.awb-s{color:#ffb84d!important}.awb-inl.awb-o{color:#6bdc6b!important}
     #awb-toast{position:fixed;right:12px;bottom:calc(70vh + 24px);z-index:100000;background:#333;color:#fff;padding:6px 10px;border-radius:4px;font:12px Arial;opacity:0;transition:opacity .2s}
   `;
   const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
@@ -208,6 +212,7 @@
       <label>Targets per message <input type="number" min="1" max="10" data-k="count"></label>
       <label>Only out within (min, 0 = all) <input type="number" min="0" max="600" data-k="windowMin"></label>
       <label>Show enemies already out <input type="checkbox" data-k="includeOkay"></label>
+      <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
       <button data-a="save">Save</button>
     </div>`;
   document.body.appendChild(box);
@@ -331,5 +336,56 @@
   if (!S.enemy) { const id = detectEnemy(); if (id) { S.enemy = id; save(); } }
   refresh();
   setInterval(() => { if (!document.hidden && !S.collapsed) refresh(); }, POLL_MS);
-  setInterval(render, 1000);
+  // ---------- Countdowns in Torn's own member list ----------
+  // For every player link on the page that belongs to the enemy faction, find the status
+  // cell in the same row (the element whose text is "Hospital", or one we already changed)
+  // and write the countdown into it. Torn may redraw the list at any time; the loop and the
+  // observer below simply write it again.
+  function findStatusCell(row) {
+    const marked = row.querySelector('[data-awb-cell]');
+    if (marked) return marked;
+    const leaves = row.querySelectorAll('[class*="status" i], [class*="status" i] *');
+    for (const el of leaves) {
+      if (el.childElementCount === 0 && /^\s*hospital\s*$/i.test(el.textContent)) return el;
+    }
+    return null;
+  }
+
+  function paintInline() {
+    if (!S.inline || !members.length) return;
+    const t = now();
+    const byId = new Map(members.map(m => [m.id, m]));
+    const seen = new Set();
+    document.querySelectorAll('a[href*="profiles.php?XID="]').forEach(a => {
+      if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
+      const mId = /XID=(\d+)/.exec(a.href); if (!mId) return;
+      const m = byId.get(+mId[1]); if (!m) return;
+      const row = a.closest('li, tr, [class*="row" i], [class*="member" i]'); if (!row || seen.has(row)) return;
+      seen.add(row);
+      const cell = findStatusCell(row); if (!cell) return;
+      let text, cls;
+      if (m.state === 'Hospital') {
+        const left = m.until - t;
+        text = left > 0 ? fmtLeft(left) : 'Out';
+        cls = left <= 0 ? 'awb-o' : left <= 120 ? 'awb-s' : 'awb-h';
+      } else if (cell.dataset.awbCell) {
+        text = m.state; cls = 'awb-o';       // left hospital since we marked it
+      } else return;
+      if (cell.textContent !== text) cell.textContent = text;
+      cell.dataset.awbCell = '1';
+      cell.classList.add('awb-inl');
+      cell.classList.remove('awb-h', 'awb-s', 'awb-o');
+      cell.classList.add(cls);
+      cell.title = m.desc || '';
+    });
+  }
+
+  let paintQueued = false;
+  new MutationObserver(() => {
+    if (paintQueued) return;
+    paintQueued = true;
+    requestAnimationFrame(() => { paintQueued = false; paintInline(); });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  setInterval(() => { render(); paintInline(); }, 1000);
 })();
