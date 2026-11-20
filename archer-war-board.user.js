@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.9
+// @version      1.10
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -43,6 +43,7 @@
     chainWarn:   GM_getValue('awb_chainwarn', 60),    // warn when your chain timer is below N seconds (0 = off)
     calledMin:   GM_getValue('awb_calledmin', 3),     // skip targets already posted to chat for N minutes (0 = off)
     showTravel:  GM_getValue('awb_showtravel', false), // travellers list expanded
+    rows:        GM_getValue('awb_rows', 12),         // target rows visible before scrolling (0 = as many as fit the screen)
   };
   const save = () => {
     GM_setValue('awb_key', S.key);
@@ -63,6 +64,7 @@
     GM_setValue('awb_chainwarn', S.chainWarn);
     GM_setValue('awb_calledmin', S.calledMin);
     GM_setValue('awb_showtravel', S.showTravel);
+    GM_setValue('awb_rows', S.rows);
   };
 
   // ---------- State ----------
@@ -376,14 +378,17 @@
 
   // ---------- UI ----------
   const css = `
-    #awb{position:fixed;right:12px;bottom:12px;width:330px;max-height:70vh;z-index:99999;background:#1e1e1e;color:#ddd;
+    #awb{position:fixed;right:12px;bottom:12px;width:330px;max-height:92vh;z-index:99999;background:#1e1e1e;color:#ddd;
       font:12px/1.35 Arial,sans-serif;border:1px solid #444;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.5);display:flex;flex-direction:column}
     #awb header{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#2b2b2b;border-radius:6px 6px 0 0;cursor:move;user-select:none;touch-action:none}
     #awb header b{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     #awb button{background:#3a3a3a;color:#eee;border:1px solid #555;border-radius:4px;padding:2px 7px;cursor:pointer;font-size:12px}
     #awb button:hover{background:#4a4a4a}
     #awb .send{background:#8a2b2b;border-color:#a33}
-    #awb .body{overflow:auto;padding:4px 8px}
+    #awb .body{overflow:auto;padding:4px 8px;min-height:0;flex:0 1 auto}
+    #awb .rowsize{display:flex;justify-content:center;gap:6px;padding:2px 0;border-top:1px solid #2a2a2a}
+    #awb .rowsize button{font-size:10px!important;padding:0 8px!important;background:#2b2b2b!important;color:#999!important}
+    #awb.collapsed .rowsize{display:none!important}
     #awb, #awb *{box-sizing:border-box;line-height:1.3}
     #awb .row{display:flex!important;flex-wrap:nowrap!important;align-items:center;gap:6px;padding:3px 4px 3px 6px;border-bottom:1px solid #2a2a2a;border-left:3px solid transparent;min-height:24px}
     #awb .row.out{border-left-color:#43a047;background:rgba(67,160,71,.08)}
@@ -442,6 +447,7 @@
     <div class="chain"></div>
     <div class="body"></div>
     <div class="trav"></div>
+    <div class="rowsize"><button data-a="rows-" title="Show fewer targets">▲ fewer</button><button data-a="rows+" title="Show more targets">more ▼</button></div>
     <div class="foot">
       <button class="send" data-a="send">📢 Next <span class="n"></span> to chat</button>
       <span class="muted status"></span>
@@ -462,6 +468,7 @@
       <label>★ browser notification <input type="checkbox" data-k="notify"></label>
       <label>Chain warning below (s, 0 = off) <input type="number" min="0" max="300" data-k="chainWarn"></label>
       <label>Skip already-called targets (min, 0 = off) <input type="number" min="0" max="30" data-k="calledMin"></label>
+      <label>Targets visible before scrolling (0 = fit screen) <input type="number" min="0" max="60" data-k="rows"></label>
       <button data-a="save">Save</button>
     </div>`;
   document.body.appendChild(box);
@@ -543,6 +550,12 @@
     const a = e.target.closest('[data-a]'); if (!a) return;
     switch (a.dataset.a) {
       case 'refresh': refresh(); break;
+      case 'rows-': case 'rows+': {
+        const cur = S.rows || Math.floor(box.querySelector('.body').clientHeight / ROW_PX);
+        S.rows = Math.max(3, Math.min(60, cur + (a.dataset.a === 'rows+' ? 3 : -3)));
+        save(); applyRows(); toast(`Showing ${S.rows} targets`);
+        break;
+      }
       case 'trav': S.showTravel = !S.showTravel; save(); render(); break;
       case 'sort':
         S.pageSort = !S.pageSort; save(); sortPage();
@@ -559,7 +572,7 @@
           else S[k] = i.value.trim();
         });
         if (S.count < 1) S.count = 3;
-        save(); cfg.style.display = 'none'; members = []; factionName = ''; enemyId = ''; warCheckedAt = 0; refresh();
+        save(); applyRows(); cfg.style.display = 'none'; members = []; factionName = ''; enemyId = ''; warCheckedAt = 0; refresh();
         break;
     }
   });
@@ -594,6 +607,12 @@
   }
 
   let lastSig = '';
+  const ROW_PX = 25; // height of one target row
+  function applyRows() {
+    const b = box.querySelector('.body');
+    b.style.maxHeight = S.rows > 0 ? `${S.rows * ROW_PX + 8}px` : '';
+  }
+
   function render() {
     const t = now();
     box.querySelector('header b').textContent = factionName ? `⚔️ ${factionName}${enemySource === 'manual' ? ' (manual)' : ''}` : '⚔️ War Board';
@@ -802,6 +821,7 @@
     requestAnimationFrame(() => { paintQueued = false; paintInline(); });
   }).observe(document.body, { childList: true, subtree: true });
 
+  applyRows();
   setInterval(() => { scanBspPage(); render(); paintInline(); sortPage(); checkAlerts(); }, 1000);
   scanBspStorage(); setInterval(scanBspStorage, POLL_MS);
 })();

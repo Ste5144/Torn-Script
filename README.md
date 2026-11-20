@@ -180,11 +180,13 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - **BSP colours:** enter your total battle stats in ⚙ (e.g. `2.5b`). BSP badges turn green (weaker than you), amber (similar) or red (much stronger). Option to hide red targets.
 - **Travelling / abroad** list under the targets, with destination and, if the script saw them leave, the time they left.
 - **Called targets:** targets you have posted to chat are dimmed with 📢 and skipped by the next post for 3 minutes (adjustable), or until they are hit again.
+- **▲ fewer / more ▼** under the list changes how many targets show before scrolling (3 at a time); set an exact number in ⚙.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 15 seconds while the panel is open, and early (at most every 4 seconds) when the page's live status changes or a timer runs out. If the page shows an enemy back in hospital before the API has the new time, they show as **Hosp…** rather than OUT.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.10 | 20 Nov 2026 | Choose how many targets show before scrolling: ▲ fewer / more ▼ buttons under the list, or a number in ⚙ (0 = fit the screen). Default 12. |
 | 1.9 | 20 Nov 2026 | Compact one-line rows (about three times as many targets visible), green edge on targets that are out, gold tint on ★ targets, travellers list collapsed behind a click. |
 | 1.8 | 20 Nov 2026 | Online dots, ★ watch list alerts, chain timer warning, BSP colours against your stats, travellers list, and skipping of already-called targets. |
 | 1.7 | 20 Nov 2026 | No more false OUT: watches the page's live status column, marks re-hospitalised enemies straight away and refreshes early; refresh every 15 s; refresh when a timer runs out. |
