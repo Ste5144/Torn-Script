@@ -13,6 +13,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
 | High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
 | Quick Mail | Any Torn page with player names | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-quick-mail.user.js) |
+| War Board | Faction pages (`factions.php`) | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-war-board.user.js) |
 
 ## Installing
 
@@ -162,3 +163,18 @@ Adds a small mail icon (✉) after player names across Torn. Clicking it opens T
 | 1.1.0 | 16 Nov 2026 | Pre-fills the subject and message (recruitment image) when you open compose from the icon. Falls back to copy buttons if the fields can't be found. |
 | 1.0.1 | 16 Nov 2026 | Icons also show on names drawn as honor bar images; avatars still skipped. |
 | 1.0.0 | 16 Nov 2026 | First version. |
+
+## War Board
+
+A floating panel on faction pages listing the enemy faction's members, with live hospital countdowns. Enemies already out are shown first, then everyone in hospital in order of who comes out soonest. Each row has a ⚔ link to that player's attack page.
+
+- **📢 Next 3 to chat** builds one message with the next targets, their release time (countdown and TCT clock time) and attack links. Click into faction chat first and the message is placed in the chat box; you press **Enter** yourself. If the chat box can't be found, the message is copied so you can paste it.
+- **⚙ settings:** Public API key, enemy faction ID (**Detect** reads it from the enemy's faction profile URL), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
+- Countdowns turn orange in the last two minutes.
+- **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
+- Refreshes from the API every 30 seconds while the panel is open (2 calls a minute).
+
+| Version | Date | Change |
+|---|---|---|
+| 1.1 | 20 Nov 2026 | Panel can be dragged and remembers its position; notices follow the panel. |
+| 1.0 | 20 Nov 2026 | First version. |
