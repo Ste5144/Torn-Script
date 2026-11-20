@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.4
+// @version      1.6
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -29,6 +29,8 @@
     windowMin:   GM_getValue('awb_window', 0),     // only show hospital targets out within N minutes (0 = show all)
     includeOkay: GM_getValue('awb_okay', true),    // list enemies already out (Okay) at the top
     newTab:      GM_getValue('awb_newtab', false), // open attack links in a new tab
+    multiLine:   GM_getValue('awb_multiline', true), // chat message: one target per line
+    pageSort:    GM_getValue('awb_pagesort', false), // re-order the page's enemy list by hospital time
     collapsed:   GM_getValue('awb_collapsed', false),
     inline:      GM_getValue('awb_inline', true),     // put countdowns in Torn's own Hospital status cells
   };
@@ -39,6 +41,8 @@
     GM_setValue('awb_window', S.windowMin);
     GM_setValue('awb_okay', S.includeOkay);
     GM_setValue('awb_newtab', S.newTab);
+    GM_setValue('awb_multiline', S.multiLine);
+    GM_setValue('awb_pagesort', S.pageSort);
     GM_setValue('awb_collapsed', S.collapsed);
     GM_setValue('awb_inline', S.inline);
   };
@@ -171,14 +175,19 @@
     const t = now();
     const list = targets().slice(0, Math.max(1, S.count));
     if (!list.length) return '';
-    const parts = list.map(m => {
-      const when = (m.state === 'Hospital' && m.until > t)
-        ? `out in ${fmtLeft(m.until - t)} (${fmtTct(m.until)} TCT)`
-        : 'OUT NOW';
-      return `${m.name} [${m.id}] ${when} ${attackUrl(m.id)}`;
+    const lines = list.map((m, i) => {
+      const inHosp = m.state === 'Hospital' && m.until > t;
+      const when = inHosp ? `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})` : 'OUT NOW';
+      const b = bsp.get(String(m.id));
+      return { head: `${i + 1}. ${m.name}${b ? ` [BSP ${b}]` : ''} · ${when}`, link: attackUrl(m.id) };
     });
-    return `🎯 Next targets: ${parts.join(' | ')}`;
+    if (S.multiLine) {
+      // One target per block: name and release time on one line, attack link underneath.
+      return ['🎯 Next out (TCT)', ...lines.map(l => `${l.head}\n${l.link}`)].join('\n');
+    }
+    return `🎯 Next out (TCT): ${lines.map(l => `${l.head} ${l.link}`).join('  ▸  ')}`;
   }
+
 
   // ---------- Chat ----------
   // Remember the chat box you last clicked into, so the message can be dropped into it.
@@ -221,6 +230,7 @@
     #awb .row a.atk:hover{background:#e53935}
     #awb .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #awb .t{font-family:monospace;font-weight:bold;min-width:62px;text-align:right}
+    #awb .bsp:not(:empty){background:#b71c1c;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold}
     #awb .hosp{color:#ff6b6b}#awb .soon{color:#ffb84d}#awb .ok{color:#6bdc6b}
     #awb .foot{padding:5px 8px;border-top:1px solid #333;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     #awb .muted{color:#888}
@@ -238,6 +248,7 @@
   box.id = 'awb';
   box.innerHTML = `
     <header><b>⚔️ War Board</b>
+      <button data-a="sort" title="Sort the page's enemy list by hospital time (out first, then soonest out)">⇅</button>
       <button data-a="refresh" title="Refresh now">↻</button>
       <button data-a="cfg" title="Settings">⚙</button>
       <button data-a="min" title="Collapse">–</button></header>
@@ -253,6 +264,7 @@
       <label>Only out within (min, 0 = all) <input type="number" min="0" max="600" data-k="windowMin"></label>
       <label>Show enemies already out <input type="checkbox" data-k="includeOkay"></label>
       <label>Open attacks in a new tab <input type="checkbox" data-k="newTab"></label>
+      <label>Chat message on separate lines <input type="checkbox" data-k="multiLine"></label>
       <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
       <button data-a="save">Save</button>
     </div>`;
@@ -327,6 +339,10 @@
     const a = e.target.closest('[data-a]'); if (!a) return;
     switch (a.dataset.a) {
       case 'refresh': refresh(); break;
+      case 'sort':
+        S.pageSort = !S.pageSort; save(); sortPage();
+        toast(S.pageSort ? 'Enemy list sorted by hospital time.' : 'Enemy list back to Torn\'s order.');
+        break;
       case 'send': sendToChat(); break;
       case 'min': S.collapsed = !S.collapsed; box.classList.toggle('collapsed', S.collapsed); save(); break;
       case 'cfg': loadCfg(); cfg.style.display = cfg.style.display === 'block' ? 'none' : 'block'; break;
@@ -359,7 +375,7 @@
         lastSig = sig;
         const tgt = S.newTab ? ' target="_blank"' : '';
         body.innerHTML = list.length ? list.map(m => `<div class="row" data-id="${m.id}">
-          <span class="nm"><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="muted">L${m.level}</span></span>
+          <span class="nm"><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="bsp"></span> <span class="muted">L${m.level}</span></span>
           <span class="t"></span>
           <a class="atk" href="${attackUrl(m.id)}"${tgt} title="Attack ${esc(m.name)}">Attack</a></div>`).join('')
           : '<div class="muted" style="padding:6px 0">No targets match the filter.</div>';
@@ -369,6 +385,8 @@
         const m = byId.get(row.dataset.id); if (!m) return;
         const left = m.until - t;
         const inHosp = m.state === 'Hospital' && left > 0;
+        const b = row.querySelector('.bsp'), bv = bsp.get(String(m.id)) || '';
+        if (b.textContent !== bv) { b.textContent = bv; b.title = bv ? 'BSP estimate' : ''; }
         const el = row.querySelector('.t');
         const text = inHosp ? fmtLeft(left) : 'OUT';
         if (el.textContent !== text) el.textContent = text;
@@ -400,6 +418,88 @@
     return null;
   }
 
+  // The largest element around a name link that still belongs to that one player
+  // (stops before an ancestor holding a different player's link).
+  function playerRow(a) {
+    let row = a, up = a.parentElement;
+    for (let i = 0; up && i < 10 && up !== document.body; i++, up = up.parentElement) {
+      const ids = new Set([...up.querySelectorAll('a[href*="profiles.php?XID="]')].map(x => (/XID=(\d+)/.exec(x.href) || [])[1]));
+      if (ids.size > 1) break;
+      row = up;
+    }
+    return row;
+  }
+
+  // ---------- BSP (Battle Stats Predictor) ----------
+  // Read-only: picks up the BSP figure your BSP script has already drawn next to each player on
+  // the page, with BSP's own browser cache as a fallback. Nothing is requested from BSP's servers.
+  const bsp = new Map();          // player id -> text such as "2q"
+  const BSP_RE = /^\s*[\d.,]+\s*[kmbtq]?\s*$/i;
+  function fmtBig(n) {
+    n = Number(n); if (!isFinite(n) || n <= 0) return '';
+    const u = [['q', 1e15], ['t', 1e12], ['b', 1e9], ['m', 1e6], ['k', 1e3]];
+    for (const [s, v] of u) if (n >= v) { const x = n / v; return (x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2)).replace(/\.?0+$/, '') + s; }
+    return String(Math.round(n));
+  }
+  function scanBspPage() {
+    document.querySelectorAll('a[href*="profiles.php?XID="]').forEach(a => {
+      if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
+      const id = (/XID=(\d+)/.exec(a.href) || [])[1]; if (!id) return;
+      const row = playerRow(a);
+      for (const el of row.querySelectorAll('.iconStats, [class*="iconStats"], [class*="bsp" i]')) {
+        const txt = el.textContent.trim();
+        if (txt && BSP_RE.test(txt)) { bsp.set(id, txt.replace(/\s+/g, '')); break; }
+      }
+    });
+  }
+  function scanBspStorage() {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!/battlestatspredictor|bsp/i.test(k)) continue;
+        const id = (/(\d{3,})\D*$/.exec(k) || [])[1];
+        if (!id || bsp.has(id)) continue;
+        let v; try { v = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }
+        const n = v && (v.TBS ?? v.TBS_Raw ?? v.Result ?? v.tbs ?? v.Score);
+        const f = fmtBig(n); if (f) bsp.set(id, f);
+      }
+    } catch (e) { /* storage not readable; page scan still works */ }
+  }
+
+  // ---------- Sort the page's enemy list by hospital time ----------
+  // Uses CSS "order" on the existing rows, so Torn's own elements are never moved or removed.
+  const sortedParents = new Set();
+  function sortPage() {
+    const btn = box.querySelector('[data-a=sort]');
+    if (btn) btn.style.background = S.pageSort ? '#2e7d32' : '';
+    if (!S.pageSort || !members.length) {
+      sortedParents.forEach(p => { p.style.display = ''; p.style.flexDirection = ''; [...p.children].forEach(c => c.style.order = ''); });
+      sortedParents.clear();
+      return;
+    }
+    const t = now();
+    const byId = new Map(members.map(m => [m.id, m]));
+    const rank = m => {
+      if (m.state === 'Okay' || (m.state === 'Hospital' && m.until <= t)) return 0;      // out now
+      if (m.state === 'Hospital') return Math.min(999999, m.until - t);                  // soonest out next
+      return 1000000;                                                                    // travelling, jail etc. last
+    };
+    const done = new Set();
+    document.querySelectorAll('a[href*="profiles.php?XID="]').forEach(a => {
+      if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
+      const m = byId.get(+((/XID=(\d+)/.exec(a.href) || [])[1])); if (!m) return;
+      const row = playerRow(a); const parent = row.parentElement;
+      if (!parent || done.has(row)) return;
+      done.add(row);
+      if (!sortedParents.has(parent)) {
+        parent.style.display = 'flex'; parent.style.flexDirection = 'column';
+        sortedParents.add(parent);
+      }
+      const o = String(rank(m));
+      if (row.style.order !== o) row.style.order = o;
+    });
+  }
+
   function paintInline() {
     if (!S.inline || !members.length) return;
     const t = now();
@@ -409,14 +509,7 @@
       if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
       const mId = /XID=(\d+)/.exec(a.href); if (!mId) return;
       const m = byId.get(+mId[1]); if (!m) return;
-      // Walk up from the name link to the largest element that still belongs to this one player
-      // (stop before an ancestor that holds a different player's link), then look for the status cell there.
-      let row = a, up = a.parentElement;
-      for (let i = 0; up && i < 10 && up !== document.body; i++, up = up.parentElement) {
-        const ids = new Set([...up.querySelectorAll('a[href*="profiles.php?XID="]')].map(x => (/XID=(\d+)/.exec(x.href) || [])[1]));
-        if (ids.size > 1) break;
-        row = up;
-      }
+      const row = playerRow(a);
       const cell = findStatusCell(row);
       if (!cell || seen.has(cell)) return;
       seen.add(cell);
@@ -444,5 +537,6 @@
     requestAnimationFrame(() => { paintQueued = false; paintInline(); });
   }).observe(document.body, { childList: true, subtree: true });
 
-  setInterval(() => { render(); paintInline(); }, 1000);
+  setInterval(() => { scanBspPage(); render(); paintInline(); sortPage(); }, 1000);
+  scanBspStorage(); setInterval(scanBspStorage, POLL_MS);
 })();

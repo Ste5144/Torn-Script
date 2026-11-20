@@ -172,11 +172,15 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - **⚙ settings:** Public API key, enemy faction ID (leave blank and it uses your faction's current ranked war opponent from the API; type an ID to override), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
 - Countdowns also replace the **Hospital** text in the page's own member list (faction profile and war pages) for the enemy faction. Turn this off in ⚙ if another script already does it.
 - Countdowns turn orange in the last two minutes.
+- If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel and added to the chat message. It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
+- **⇅** re-orders the page's own enemy list by hospital time: enemies already out first, then soonest out, then travelling/jailed. Click again to go back to Torn's order. The button turns green while sorting is on.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 30 seconds while the panel is open (2 calls a minute).
 
 | Version | Date | Change |
 |---|---|---|
+| 1.6 | 20 Nov 2026 | Shows each target's BSP figure (from your BSP script) in the panel and the chat message. ⇅ button sorts the page's enemy list by hospital time. |
+| 1.5 | 20 Nov 2026 | Neater chat message: numbered, one target per line with the attack link underneath, TCT release time first. Single-line layout available in ⚙. |
 | 1.4 | 20 Nov 2026 | Attack button now works reliably: the list no longer redraws every second (only the timers update), so clicks aren't lost. Bigger red Attack button; opens in the same tab unless set otherwise. |
 | 1.3 | 20 Nov 2026 | Countdowns now appear in the ranked war member list. Enemy faction taken from your current ranked war via the API (page guessing removed; it could pick a territory-war faction). Clears any previously saved enemy ID once. |
 | 1.2 | 20 Nov 2026 | Countdowns shown in the page's own Hospital status cells, not just the panel. |
