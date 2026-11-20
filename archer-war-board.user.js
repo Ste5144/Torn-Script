@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.6.2
+// @version      1.7
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -20,7 +20,7 @@
   'use strict';
 
   // ---------- Settings ----------
-  const POLL_MS = 30000;            // API refresh: every 30 s (2 calls/min, well under the 100/min key limit)
+  const POLL_MS = 15000;            // API refresh: every 15 s, plus an early refresh when the page shows a status change (well under the 100/min key limit)
   if (GM_getValue('awb_ver', 0) < 13) { GM_setValue('awb_enemy', ''); GM_setValue('awb_ver', 13); }
   if (GM_getValue('awb_ver', 0) < 162) { GM_setValue('awb_newtab', true); GM_setValue('awb_ver', 162); }
   const S = {
@@ -49,7 +49,10 @@
   };
 
   // ---------- State ----------
-  let members = [];        // {id, name, level, state, until, desc}
+  let members = [];        // {id, name, level, state, until, desc, pending}
+  const pageHosp = new Map(); // player id -> time the page showed "Hospital" while our data said out
+  // In hospital? "pending" = the page says Hospital but we don't have the new release time yet.
+  const inHosp = (m, t) => m.state === 'Hospital' && (m.pending || m.until > t);
   let factionName = '';
   let offset = 0;          // Torn server clock minus local clock (seconds)
   let lastFetch = 0;
@@ -139,16 +142,38 @@
     return e ? e.id : '';
   }
 
+  let inflight = false, queued = null;
+  function requestRefresh() {           // early refresh, at most one every 4 s
+    if (queued || inflight) return;
+    const wait = Math.max(0, 4 - (now() - lastFetch)) * 1000;
+    queued = setTimeout(() => { queued = null; refresh(); }, wait);
+  }
+
   async function refresh() {
+    if (inflight) return;
+    inflight = true;
+    try { await doRefresh(); } finally { inflight = false; }
+  }
+
+  async function doRefresh() {
     if (!S.key) { lastError = 'Enter your Public API key in ⚙.'; render(); return; }
     try {
       const id = await resolveEnemy();
       if (!id) { enemyId = ''; members = []; factionName = ''; lastError = 'No active ranked war found. Enter the enemy faction ID in ⚙.'; render(); return; }
       if (id !== enemyId) { enemyId = id; members = []; factionName = ''; }
       let j;
-      try { j = await api(`https://api.torn.com/faction/${id}?selections=basic&key=${S.key}&comment=ArcherWarBoard`); }
+      try { j = await api(`https://api.torn.com/faction/${id}?selections=basic&key=${S.key}&comment=ArcherWarBoard&timestamp=${now()}`); }
       catch (e1) { j = await api(`https://api.torn.com/v2/faction/${id}/members?key=${S.key}&comment=ArcherWarBoard`); }
       members = parseMembers(j);
+      // The page's live status can be ahead of the API. Keep anyone the page showed in hospital
+      // in the last 90 s as "in hospital, time updating" until the API catches up.
+      const t = now();
+      members.forEach(m => {
+        const seen = pageHosp.get(m.id);
+        if (m.state === 'Hospital' && m.until > t) { pageHosp.delete(m.id); return; }
+        if (seen && t - seen < 90) { m.state = 'Hospital'; m.pending = true; requestRefresh(); }
+        else pageHosp.delete(m.id);
+      });
       if (j.name) factionName = j.name;
       lastFetch = now();
       lastError = members.length ? '' : 'No members returned. Check the faction ID.';
@@ -163,11 +188,12 @@
   function targets() {
     const t = now();
     const okay = S.includeOkay
-      ? members.filter(m => m.state === 'Okay' || (m.state === 'Hospital' && m.until <= t))
+      ? members.filter(m => m.state === 'Okay' || (m.state === 'Hospital' && !inHosp(m, t)))
       : [];
-    let hosp = members.filter(m => m.state === 'Hospital' && m.until > t);
-    if (S.windowMin > 0) hosp = hosp.filter(m => m.until - t <= S.windowMin * 60);
-    hosp.sort((a, b) => a.until - b.until);
+    let hosp = members.filter(m => inHosp(m, t));
+    if (S.windowMin > 0) hosp = hosp.filter(m => m.pending || m.until - t <= S.windowMin * 60);
+    const key = m => m.pending ? Infinity : m.until;
+    hosp.sort((a, b) => key(a) - key(b));
     okay.sort((a, b) => b.level - a.level);
     return [...okay, ...hosp];
   }
@@ -177,8 +203,7 @@
     const list = targets().slice(0, Math.max(1, S.count));
     if (!list.length) return '';
     const lines = list.map((m, i) => {
-      const inHosp = m.state === 'Hospital' && m.until > t;
-      const when = inHosp ? `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})` : 'OUT NOW';
+      const when = !inHosp(m, t) ? 'OUT NOW' : m.pending ? 'in hospital (time updating)' : `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})`;
       const b = bsp.get(String(m.id));
       return { head: `${i + 1}. ${m.name}${b ? ` [BSP ${b}]` : ''} · ${when}`, link: attackUrl(m.id) };
     });
@@ -371,7 +396,7 @@
       const list = targets();
       // Rebuild the rows only when the list itself changes (order, members, out/in). Every other
       // second just the timer text is updated, so links under the mouse are never replaced mid-click.
-      const sig = list.map(m => `${m.id}:${m.state === 'Hospital' && m.until > t ? 'h' : 'o'}`).join(',') + `|${S.newTab}`;
+      const sig = list.map(m => `${m.id}:${inHosp(m, t) ? 'h' : 'o'}`).join(',') + `|${S.newTab}`;
       if (sig !== lastSig || !body.querySelector('.row')) {
         lastSig = sig;
         const tgt = S.newTab ? ' target="_blank"' : '';
@@ -385,17 +410,19 @@
       body.querySelectorAll('.row').forEach(row => {
         const m = byId.get(row.dataset.id); if (!m) return;
         const left = m.until - t;
-        const inHosp = m.state === 'Hospital' && left > 0;
+        const h = inHosp(m, t);
         const b = row.querySelector('.bsp'), bv = bsp.get(String(m.id)) || '';
         if (b.textContent !== bv) { b.textContent = bv; b.title = bv ? 'BSP estimate' : ''; }
         const el = row.querySelector('.t');
-        const text = inHosp ? fmtLeft(left) : 'OUT';
+        const text = !h ? 'OUT' : m.pending ? 'Hosp…' : fmtLeft(left);
         if (el.textContent !== text) el.textContent = text;
-        el.className = 't ' + (inHosp ? (left <= 120 ? 'soon' : 'hosp') : 'ok');
+        el.className = 't ' + (!h ? 'ok' : m.pending ? 'hosp' : left <= 120 ? 'soon' : 'hosp');
         el.title = m.desc || '';
       });
     }
-    const hospCount = members.filter(m => m.state === 'Hospital' && m.until > t).length;
+    const hospCount = members.filter(m => inHosp(m, t)).length;
+    // A timer just ran out: refresh soon so a re-hospitalised player isn't left showing OUT.
+    if (members.some(m => m.state === 'Hospital' && !m.pending && m.until <= t && m.until > t - 2)) requestRefresh();
     box.querySelector('.status').textContent = lastFetch
       ? `${hospCount} in hosp · updated ${Math.max(0, t - lastFetch)}s ago`
       : '';
@@ -409,15 +436,17 @@
   // cell in the same row (the element whose text is "Hospital", or one we already changed)
   // and write the countdown into it. Torn may redraw the list at any time; the loop and the
   // observer below simply write it again.
+  const STATUS_RE = /^\s*(okay|hospital|traveling|travelling|abroad|jail|federal|fallen)\b/i;
   function findStatusCell(row) {
     const marked = row.querySelector('[data-awb-cell]');
     if (marked) return marked;
     const leaves = row.querySelectorAll('[class*="status" i], [class*="status" i] *');
     for (const el of leaves) {
-      if (el.childElementCount === 0 && /^\s*hospital\s*$/i.test(el.textContent)) return el;
+      if (el.childElementCount === 0 && STATUS_RE.test(el.textContent)) return el;
     }
     return null;
   }
+
 
   // The largest element around a name link that still belongs to that one player
   // (stops before an ancestor holding a different player's link).
@@ -481,8 +510,9 @@
     const t = now();
     const byId = new Map(members.map(m => [m.id, m]));
     const rank = m => {
-      if (m.state === 'Okay' || (m.state === 'Hospital' && m.until <= t)) return 0;      // out now
-      if (m.state === 'Hospital') return Math.min(999999, m.until - t);                  // soonest out next
+      if (m.state === 'Okay' || (m.state === 'Hospital' && !inHosp(m, t))) return 0;   // out now
+      if (m.pending) return 999998;                                                        // in hospital, time updating
+      if (m.state === 'Hospital') return Math.min(999997, m.until - t);                  // soonest out next
       return 1000000;                                                                    // travelling, jail etc. last
     };
     const done = new Set();
@@ -502,7 +532,7 @@
   }
 
   function paintInline() {
-    if (!S.inline || !members.length) return;
+    if (!members.length) return;
     const t = now();
     const byId = new Map(members.map(m => [m.id, m]));
     const seen = new Set();
@@ -514,15 +544,31 @@
       const cell = findStatusCell(row);
       if (!cell || seen.has(cell)) return;
       seen.add(cell);
+
+      // Torn updates this cell live. If it now says something we didn't write, it is newer than our data.
+      const ours = cell.dataset.awbLast !== undefined && cell.textContent === cell.dataset.awbLast;
+      if (!ours) {
+        const page = cell.textContent.trim().toLowerCase();
+        if (page.startsWith('hospital') && !inHosp(m, t)) {
+          m.state = 'Hospital'; m.pending = true; pageHosp.set(m.id, t); requestRefresh();
+        } else if (page.startsWith('okay') && inHosp(m, t)) {
+          m.state = 'Okay'; m.pending = false; pageHosp.delete(m.id); requestRefresh();
+        }
+      }
+      if (!S.inline) return;
+
       let text, cls;
-      if (m.state === 'Hospital') {
+      if (inHosp(m, t)) {
         const left = m.until - t;
-        text = left > 0 ? fmtLeft(left) : 'Out';
-        cls = left <= 0 ? 'awb-o' : left <= 120 ? 'awb-s' : 'awb-h';
+        text = m.pending ? 'Hosp…' : fmtLeft(left);
+        cls = m.pending ? 'awb-h' : left <= 120 ? 'awb-s' : 'awb-h';
+      } else if (m.state === 'Hospital') {
+        text = 'Out'; cls = 'awb-o';         // timer ran out; confirmed on next refresh
       } else if (cell.dataset.awbCell) {
         text = m.state; cls = 'awb-o';       // left hospital since we marked it
       } else return;
       if (cell.textContent !== text) cell.textContent = text;
+      cell.dataset.awbLast = text;
       cell.dataset.awbCell = '1';
       cell.classList.add('awb-inl');
       cell.classList.remove('awb-h', 'awb-s', 'awb-o');

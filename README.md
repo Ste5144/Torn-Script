@@ -175,10 +175,11 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel and added to the chat message. It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
 - **⇅** re-orders the page's own enemy list by hospital time: enemies already out first, then soonest out, then travelling/jailed. Click again to go back to Torn's order. The button turns green while sorting is on.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
-- Refreshes from the API every 30 seconds while the panel is open (2 calls a minute).
+- Refreshes from the API every 15 seconds while the panel is open, and early (at most every 4 seconds) when the page's live status changes or a timer runs out. If the page shows an enemy back in hospital before the API has the new time, they show as **Hosp…** rather than OUT.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.7 | 20 Nov 2026 | No more false OUT: watches the page's live status column, marks re-hospitalised enemies straight away and refreshes early; refresh every 15 s; refresh when a timer runs out. |
 | 1.6.2 | 20 Nov 2026 | Attack button opens in a new tab by default, keeping the war page open. |
 | 1.6.1 | 20 Nov 2026 | Attack links use Torn's new address (`page.php?sid=attack`); the old `loader.php` one now returns an error. |
 | 1.6 | 20 Nov 2026 | Shows each target's BSP figure (from your BSP script) in the panel and the chat message. ⇅ button sorts the page's enemy list by hospital time. |
