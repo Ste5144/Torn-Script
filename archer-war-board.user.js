@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.8
+// @version      1.9
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -42,6 +42,7 @@
     notify:      GM_getValue('awb_notify', true),     // browser notification for watch-list alerts
     chainWarn:   GM_getValue('awb_chainwarn', 60),    // warn when your chain timer is below N seconds (0 = off)
     calledMin:   GM_getValue('awb_calledmin', 3),     // skip targets already posted to chat for N minutes (0 = off)
+    showTravel:  GM_getValue('awb_showtravel', false), // travellers list expanded
   };
   const save = () => {
     GM_setValue('awb_key', S.key);
@@ -61,6 +62,7 @@
     GM_setValue('awb_notify', S.notify);
     GM_setValue('awb_chainwarn', S.chainWarn);
     GM_setValue('awb_calledmin', S.calledMin);
+    GM_setValue('awb_showtravel', S.showTravel);
   };
 
   // ---------- State ----------
@@ -382,11 +384,23 @@
     #awb button:hover{background:#4a4a4a}
     #awb .send{background:#8a2b2b;border-color:#a33}
     #awb .body{overflow:auto;padding:4px 8px}
-    #awb .row{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #2e2e2e}
+    #awb, #awb *{box-sizing:border-box;line-height:1.3}
+    #awb .row{display:flex!important;flex-wrap:nowrap!important;align-items:center;gap:6px;padding:3px 4px 3px 6px;border-bottom:1px solid #2a2a2a;border-left:3px solid transparent;min-height:24px}
+    #awb .row.out{border-left-color:#43a047;background:rgba(67,160,71,.08)}
+    #awb .row.watched{background:rgba(255,213,79,.10)}
+    #awb .row.out.watched{background:rgba(255,213,79,.14)}
+    #awb .row > *, #awb .nm > *{display:inline-block!important;float:none!important;margin:0!important;vertical-align:middle;width:auto!important}
+    #awb .row .t{flex:none}#awb .row a.atk{flex:none}
     #awb .row a{color:#9cf;text-decoration:none}
     #awb .row a.atk{background:#c62828;color:#fff;border-radius:3px;padding:1px 7px;font-weight:bold;font-size:11px}
     #awb .row a.atk:hover{background:#e53935}
-    #awb .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #awb .nm{flex:1 1 auto;min-width:0;display:flex!important;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}
+    #awb .nm a{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+    #awb .nm .star,#awb .nm .dot,#awb .nm .bsp,#awb .nm .muted{flex:none}
+    #awb .nm .muted{font-size:10px}
+    #awb .dot{width:7px!important;height:7px!important;display:inline-block!important;flex:none}
+    #awb button, #awb button *{display:inline-block!important;white-space:nowrap!important;float:none!important}
+    #awb .foot{flex-wrap:nowrap!important}#awb .foot .status{display:inline!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
     #awb .t{font-family:monospace;font-weight:bold;min-width:62px;text-align:right}
     #awb .bsp:not(:empty){background:#b71c1c;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold}
     #awb .hosp{color:#ff6b6b}#awb .soon{color:#ffb84d}#awb .ok{color:#6bdc6b}
@@ -399,7 +413,12 @@
     #awb .chain{display:none;padding:4px 8px;border-bottom:1px solid #333;font-weight:bold}
     #awb .chain.warn{background:#7a1c1c;animation:awbflash 1s infinite}
     @keyframes awbflash{50%{background:#b71c1c}}
-    #awb .trav{padding:0 8px 4px;font-size:11px}
+    #awb .trav{padding:2px 8px 4px;font-size:11px;border-top:1px solid #333}
+    #awb .trav .th{cursor:pointer;user-select:none}#awb .trav .th:hover{color:#ccc}
+    #awb .trav .tl{max-height:120px;overflow:auto}
+    #awb .tl > div{display:flex!important;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;padding:1px 0}
+    #awb .tl > div > *{display:inline-block!important;flex:none;float:none!important;margin:0!important}
+    #awb .tl > div > .muted{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
     #awb .trav:empty{display:none}
     #awb .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;background:#555}
     #awb .dot.online{background:#43a047}#awb .dot.idle{background:#fbc02d}#awb .dot.offline{background:#757575}
@@ -524,6 +543,7 @@
     const a = e.target.closest('[data-a]'); if (!a) return;
     switch (a.dataset.a) {
       case 'refresh': refresh(); break;
+      case 'trav': S.showTravel = !S.showTravel; save(); render(); break;
       case 'sort':
         S.pageSort = !S.pageSort; save(); sortPage();
         toast(S.pageSort ? 'Enemy list sorted by hospital time.' : 'Enemy list back to Torn\'s order.');
@@ -564,11 +584,12 @@
   function renderTravel(t) {
     const el = box.querySelector('.trav');
     const list = members.filter(m => travelSeen.has(m.id));
-    const html = list.length ? `<div class="muted" style="margin-top:4px">✈ Travelling / abroad (${list.length})</div>` + list.map(m => {
+    const head = `<div class="muted th" data-a="trav">✈ Travelling / abroad (${list.length}) ${S.showTravel ? '▾' : '▸'}</div>`;
+    const html = !list.length ? '' : !S.showTravel ? head : head + '<div class="tl">' + list.map(m => {
       const tr = travelSeen.get(m.id);
       const since = tr.known ? ` · seen ${fmtTct(tr.since).substr(0, 5)} TCT` : '';
       return `<div><span class="dot ${m.act || ''}"></span><a href="${profileUrl(m.id)}" target="_blank" style="color:#9cf">${esc(m.name)}</a> <span class="muted">${esc(m.desc)}${since}</span></div>`;
-    }).join('') : '';
+    }).join('') + '</div>';
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
 
@@ -606,6 +627,8 @@
         const dot = row.querySelector('.dot');
         dot.className = 'dot ' + (m.act || ''); dot.title = m.actRel ? `${m.act} · ${m.actRel}` : '';
         row.classList.toggle('called', isCalled(m, t));
+        row.classList.toggle('out', !h);
+        row.classList.toggle('watched', on);
         const el = row.querySelector('.t');
         const text = !h ? 'OUT' : m.pending ? 'Hosp…' : fmtLeft(left);
         if (el.textContent !== text) el.textContent = text;

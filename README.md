@@ -185,6 +185,7 @@ A floating panel on faction pages listing the enemy faction's members, with live
 
 | Version | Date | Change |
 |---|---|---|
+| 1.9 | 20 Nov 2026 | Compact one-line rows (about three times as many targets visible), green edge on targets that are out, gold tint on ★ targets, travellers list collapsed behind a click. |
 | 1.8 | 20 Nov 2026 | Online dots, ★ watch list alerts, chain timer warning, BSP colours against your stats, travellers list, and skipping of already-called targets. |
 | 1.7 | 20 Nov 2026 | No more false OUT: watches the page's live status column, marks re-hospitalised enemies straight away and refreshes early; refresh every 15 s; refresh when a timer runs out. |
 | 1.6.2 | 20 Nov 2026 | Attack button opens in a new tab by default, keeping the war page open. |
