@@ -179,6 +179,7 @@ A floating panel on faction pages listing the enemy faction's members, with live
 
 | Version | Date | Change |
 |---|---|---|
+| 1.6.1 | 20 Nov 2026 | Attack links use Torn's new address (`page.php?sid=attack`); the old `loader.php` one now returns an error. |
 | 1.6 | 20 Nov 2026 | Shows each target's BSP figure (from your BSP script) in the panel and the chat message. ⇅ button sorts the page's enemy list by hospital time. |
 | 1.5 | 20 Nov 2026 | Neater chat message: numbered, one target per line with the attack link underneath, TCT release time first. Single-line layout available in ⚙. |
 | 1.4 | 20 Nov 2026 | Attack button now works reliably: the list no longer redraws every second (only the timers update), so clicks aren't lost. Bigger red Attack button; opens in the same tab unless set otherwise. |

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.6
+// @version      1.6.1
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -57,7 +57,7 @@
 
   const now = () => Math.floor(Date.now() / 1000) + offset;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const attackUrl = id => `https://www.torn.com/loader.php?sid=attack&user2ID=${id}`;
+  const attackUrl = id => `https://www.torn.com/page.php?sid=attack&user2ID=${id}`;
   const profileUrl = id => `https://www.torn.com/profiles.php?XID=${id}`;
 
   function fmtLeft(sec) {
