@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.3
+// @version      1.4
 // @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
@@ -28,6 +28,7 @@
     count:       GM_getValue('awb_count', 3),      // how many targets go in the chat message
     windowMin:   GM_getValue('awb_window', 0),     // only show hospital targets out within N minutes (0 = show all)
     includeOkay: GM_getValue('awb_okay', true),    // list enemies already out (Okay) at the top
+    newTab:      GM_getValue('awb_newtab', false), // open attack links in a new tab
     collapsed:   GM_getValue('awb_collapsed', false),
     inline:      GM_getValue('awb_inline', true),     // put countdowns in Torn's own Hospital status cells
   };
@@ -37,6 +38,7 @@
     GM_setValue('awb_count', S.count);
     GM_setValue('awb_window', S.windowMin);
     GM_setValue('awb_okay', S.includeOkay);
+    GM_setValue('awb_newtab', S.newTab);
     GM_setValue('awb_collapsed', S.collapsed);
     GM_setValue('awb_inline', S.inline);
   };
@@ -215,6 +217,8 @@
     #awb .body{overflow:auto;padding:4px 8px}
     #awb .row{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #2e2e2e}
     #awb .row a{color:#9cf;text-decoration:none}
+    #awb .row a.atk{background:#c62828;color:#fff;border-radius:3px;padding:1px 7px;font-weight:bold;font-size:11px}
+    #awb .row a.atk:hover{background:#e53935}
     #awb .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #awb .t{font-family:monospace;font-weight:bold;min-width:62px;text-align:right}
     #awb .hosp{color:#ff6b6b}#awb .soon{color:#ffb84d}#awb .ok{color:#6bdc6b}
@@ -248,6 +252,7 @@
       <label>Targets per message <input type="number" min="1" max="10" data-k="count"></label>
       <label>Only out within (min, 0 = all) <input type="number" min="0" max="600" data-k="windowMin"></label>
       <label>Show enemies already out <input type="checkbox" data-k="includeOkay"></label>
+      <label>Open attacks in a new tab <input type="checkbox" data-k="newTab"></label>
       <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
       <button data-a="save">Save</button>
     </div>`;
@@ -338,23 +343,38 @@
     }
   });
 
+  let lastSig = '';
   function render() {
     const t = now();
     box.querySelector('header b').textContent = factionName ? `⚔️ ${factionName}${enemySource === 'manual' ? ' (manual)' : ''}` : '⚔️ War Board';
     box.querySelector('.n').textContent = S.count;
     const body = box.querySelector('.body');
-    if (lastError) { body.innerHTML = `<div class="muted" style="padding:6px 0">${esc(lastError)}</div>`; }
+    if (lastError) { lastSig = ''; body.innerHTML = `<div class="muted" style="padding:6px 0">${esc(lastError)}</div>`; }
     else {
       const list = targets();
-      body.innerHTML = list.length ? list.map(m => {
+      // Rebuild the rows only when the list itself changes (order, members, out/in). Every other
+      // second just the timer text is updated, so links under the mouse are never replaced mid-click.
+      const sig = list.map(m => `${m.id}:${m.state === 'Hospital' && m.until > t ? 'h' : 'o'}`).join(',') + `|${S.newTab}`;
+      if (sig !== lastSig || !body.querySelector('.row')) {
+        lastSig = sig;
+        const tgt = S.newTab ? ' target="_blank"' : '';
+        body.innerHTML = list.length ? list.map(m => `<div class="row" data-id="${m.id}">
+          <span class="nm"><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="muted">L${m.level}</span></span>
+          <span class="t"></span>
+          <a class="atk" href="${attackUrl(m.id)}"${tgt} title="Attack ${esc(m.name)}">Attack</a></div>`).join('')
+          : '<div class="muted" style="padding:6px 0">No targets match the filter.</div>';
+      }
+      const byId = new Map(list.map(m => [String(m.id), m]));
+      body.querySelectorAll('.row').forEach(row => {
+        const m = byId.get(row.dataset.id); if (!m) return;
         const left = m.until - t;
         const inHosp = m.state === 'Hospital' && left > 0;
-        const cls = inHosp ? (left <= 120 ? 'soon' : 'hosp') : 'ok';
-        return `<div class="row">
-          <span class="nm"><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="muted">L${m.level}</span></span>
-          <span class="t ${cls}" title="${esc(m.desc)}">${inHosp ? fmtLeft(left) : 'OUT'}</span>
-          <a href="${attackUrl(m.id)}" target="_blank" title="Open attack page">⚔</a></div>`;
-      }).join('') : '<div class="muted" style="padding:6px 0">No targets match the filter.</div>';
+        const el = row.querySelector('.t');
+        const text = inHosp ? fmtLeft(left) : 'OUT';
+        if (el.textContent !== text) el.textContent = text;
+        el.className = 't ' + (inHosp ? (left <= 120 ? 'soon' : 'hosp') : 'ok');
+        el.title = m.desc || '';
+      });
     }
     const hospCount = members.filter(m => m.state === 'Hospital' && m.until > t).length;
     box.querySelector('.status').textContent = lastFetch
