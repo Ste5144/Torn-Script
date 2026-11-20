@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Archer War Board
 // @namespace    sterlingarcher.torn
-// @version      1.11
-// @description  Enemy hospital countdowns sorted by soonest out, optional time filter, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
+// @version      2.0
+// @description  Enemy hospital countdowns sorted by soonest out, FFScouter fair-fight estimates, and a one-click "next N to chat" message with attack links. Display only: reads the Torn API with a Public key and never acts for you.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -10,6 +10,7 @@
 // @grant        GM_setClipboard
 // @grant        GM_notification
 // @connect      api.torn.com
+// @connect      ffscouter.com
 // @run-at       document-idle
 // @author       SterlingArcher
 // @homepageURL  https://github.com/Ste5144/Torn-Script
@@ -35,15 +36,16 @@
     pageSort:    GM_getValue('awb_pagesort', false), // re-order the page's enemy list by hospital time
     collapsed:   GM_getValue('awb_collapsed', false),
     inline:      GM_getValue('awb_inline', true),     // put countdowns in Torn's own Hospital status cells
-    myStats:     GM_getValue('awb_mystats', ''),      // your total battle stats, e.g. 2.5b (for BSP colouring)
-    hideRed:     GM_getValue('awb_hidered', false),   // hide targets BSP says are much stronger than you
+    ffKey:       GM_getValue('awb_ffkey', ''),        // Torn key registered at ffscouter.com (blank = use the API key above)
+    ffOn:        GM_getValue('awb_ffon', true),       // fetch FFScouter estimates
+    hideRed:     GM_getValue('awb_hidered', false),   // hide targets with fair fight above 3.5 (difficult or worse)
     alertSec:    GM_getValue('awb_alertsec', 10),     // watch-list alert this many seconds before release
     sound:       GM_getValue('awb_sound', true),      // beep for watch-list and chain alerts
     notify:      GM_getValue('awb_notify', true),     // browser notification for watch-list alerts
     chainWarn:   GM_getValue('awb_chainwarn', 60),    // warn when your chain timer is below N seconds (0 = off)
     calledMin:   GM_getValue('awb_calledmin', 3),     // skip targets already posted to chat for N minutes (0 = off)
     showTravel:  GM_getValue('awb_showtravel', false), // travellers list expanded
-    bspChat:     GM_getValue('awb_bspchat', false), // include BSP figures in the chat message (off: BSP is a paid service; check its terms before sharing)
+    ffChat:      GM_getValue('awb_ffchat', true),     // include the stat estimate in the chat message
     rows:        GM_getValue('awb_rows', 12),         // target rows visible before scrolling (0 = as many as fit the screen)
   };
   const save = () => {
@@ -57,7 +59,8 @@
     GM_setValue('awb_pagesort', S.pageSort);
     GM_setValue('awb_collapsed', S.collapsed);
     GM_setValue('awb_inline', S.inline);
-    GM_setValue('awb_mystats', S.myStats);
+    GM_setValue('awb_ffkey', S.ffKey);
+    GM_setValue('awb_ffon', S.ffOn);
     GM_setValue('awb_hidered', S.hideRed);
     GM_setValue('awb_alertsec', S.alertSec);
     GM_setValue('awb_sound', S.sound);
@@ -66,7 +69,7 @@
     GM_setValue('awb_calledmin', S.calledMin);
     GM_setValue('awb_showtravel', S.showTravel);
     GM_setValue('awb_rows', S.rows);
-    GM_setValue('awb_bspchat', S.bspChat);
+    GM_setValue('awb_ffchat', S.ffChat);
   };
 
   // ---------- State ----------
@@ -207,6 +210,7 @@
       lastFetch = now();
       trackTravel();
       fetchChain();
+      fetchFF();
       lastError = members.length ? '' : 'No members returned. Check the faction ID.';
     } catch (e) {
       lastError = e.message;
@@ -239,18 +243,52 @@
     });
   }
 
-  // ---------- BSP vs your stats ----------
-  function parseBig(txt) {
-    const m = /^\s*([\d.,]+)\s*([kmbtq]?)\s*$/i.exec(String(txt || '')); if (!m) return 0;
-    const mult = { '': 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 }[m[2].toLowerCase()];
-    return parseFloat(m[1].replace(/,/g, '')) * mult;
+  // ---------- FFScouter (fair fight + battle stat estimates) ----------
+  // One bulk request (up to 205 players) to ffscouter.com/api/v1/get-stats, refreshed every 5 minutes
+  // or when new enemies appear. Fair fight is relative to the owner of the key used.
+  const ff = new Map();          // player id -> {ff, est, at}
+  let ffAt = 0, ffError = '', ffBusy = false;
+  const FF_EVERY = 300;          // seconds; FFScouter's own data changes slowly
+  function ffApi(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url, timeout: 20000,
+        onload: r => {
+          let j; try { j = JSON.parse(r.responseText); } catch (e) { return reject(new Error(`FFScouter: HTTP ${r.status}`)); }
+          if (Array.isArray(j)) return resolve(j);
+          reject(new Error(`FFScouter: ${(j && (j.error || j.message || j.detail)) || 'HTTP ' + r.status}`));
+        },
+        onerror: () => reject(new Error('FFScouter: network error')),
+        ontimeout: () => reject(new Error('FFScouter: timeout')),
+      });
+    });
   }
-  function bspClass(id) {
-    const mine = parseBig(S.myStats), theirs = parseBig(bsp.get(String(id)));
-    if (!mine || !theirs) return '';
-    const r = theirs / mine;
-    return r <= 0.8 ? 'g' : r <= 1.25 ? 'a' : 'r';
+  async function fetchFF(force) {
+    const key = S.ffKey || S.key;
+    if (!S.ffOn || !key || ffBusy || !members.length) return;
+    const missing = members.some(m => !ff.has(m.id));
+    if (!force && !missing && now() - ffAt < FF_EVERY) return;
+    ffBusy = true;
+    try {
+      const ids = members.map(m => m.id);
+      for (let i = 0; i < ids.length; i += 205) {
+        const rows = await ffApi(`https://ffscouter.com/api/v1/get-stats?key=${key}&targets=${ids.slice(i, i + 205).join(',')}`);
+        rows.forEach(r => ff.set(+r.player_id, { ff: r.fair_fight, est: r.bs_estimate_human || '', at: r.last_updated || 0 }));
+      }
+      ids.forEach(id => { if (!ff.has(id)) ff.set(id, { ff: null, est: '', at: 0 }); });
+      ffAt = now(); ffError = '';
+    } catch (e) {
+      ffError = /key/i.test(e.message) ? 'FFScouter: key not registered at ffscouter.com' : e.message;
+      ffAt = now();  // don't hammer it; retry on the normal cycle
+    } finally { ffBusy = false; }
   }
+  // Colour by FFScouter's own guide: up to 2.5 easy, up to 3.5 moderate, above that difficult.
+  function ffClass(id) {
+    const v = ff.get(+id); if (!v || v.ff == null) return '';
+    return v.ff <= 2.5 ? 'g' : v.ff <= 3.5 ? 'a' : 'r';
+  }
+  const ffText = id => { const v = ff.get(+id); return v && v.ff != null ? Number(v.ff).toFixed(2) : ''; };
+  const estText = id => { const v = ff.get(+id); return (v && v.est) || ''; };
 
   // ---------- Called targets ----------
   function isCalled(m, t) {
@@ -319,12 +357,12 @@
       ? members.filter(m => m.state === 'Okay' || (m.state === 'Hospital' && !inHosp(m, t)))
       : [];
     let hosp = members.filter(m => inHosp(m, t));
-    if (S.hideRed) hosp = hosp.filter(m => bspClass(m.id) !== 'r');
+    if (S.hideRed) hosp = hosp.filter(m => ffClass(m.id) !== 'r');
     if (S.windowMin > 0) hosp = hosp.filter(m => m.pending || m.until - t <= S.windowMin * 60);
     const key = m => m.pending ? Infinity : m.until;
     hosp.sort((a, b) => key(a) - key(b));
     okay.sort((a, b) => b.level - a.level);
-    const ok2 = S.hideRed ? okay.filter(m => bspClass(m.id) !== 'r') : okay;
+    const ok2 = S.hideRed ? okay.filter(m => ffClass(m.id) !== 'r') : okay;
     return [...ok2, ...hosp];
   }
 
@@ -336,9 +374,9 @@
     if (!list.length) return '';
     const lines = list.map((m, i) => {
       const when = !inHosp(m, t) ? 'OUT NOW' : m.pending ? 'in hospital (time updating)' : `${fmtTct(m.until)} (in ${fmtLeft(m.until - t)})`;
-      const b = bsp.get(String(m.id));
+      const b = estText(m.id);
       const act = m.act === 'offline' ? ' · offline' : m.act === 'idle' ? ' · idle' : m.act === 'online' ? ' · online' : '';
-      return { head: `${i + 1}. ${m.name}${b && S.bspChat ? ` [BSP ${b}]` : ''} · ${when}${act}`, link: attackUrl(m.id) };
+      return { head: `${i + 1}. ${m.name}${b && S.ffChat ? ` [~${b}]` : ''} · ${when}${act}`, link: attackUrl(m.id) };
     });
     if (S.multiLine) {
       // One target per block: name and release time on one line, attack link underneath.
@@ -403,13 +441,13 @@
     #awb .row a.atk:hover{background:#e53935}
     #awb .nm{flex:1 1 auto;min-width:0;display:flex!important;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}
     #awb .nm a{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
-    #awb .nm .star,#awb .nm .dot,#awb .nm .bsp,#awb .nm .muted{flex:none}
+    #awb .nm .star,#awb .nm .dot,#awb .nm .ffb,#awb .nm .muted{flex:none}
     #awb .nm .muted{font-size:10px}
     #awb .dot{width:7px!important;height:7px!important;display:inline-block!important;flex:none}
     #awb button, #awb button *{display:inline-block!important;white-space:nowrap!important;float:none!important}
     #awb .foot{flex-wrap:nowrap!important}#awb .foot .status{display:inline!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
     #awb .t{font-family:monospace;font-weight:bold;min-width:62px;text-align:right}
-    #awb .bsp:not(:empty){background:#b71c1c;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold}
+    #awb .ffb:not(:empty){background:#555;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold}
     #awb .hosp{color:#ff6b6b}#awb .soon{color:#ffb84d}#awb .ok{color:#6bdc6b}
     #awb .foot{padding:5px 8px;border-top:1px solid #333;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     #awb .muted{color:#888}
@@ -430,7 +468,7 @@
     #awb .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;background:#555}
     #awb .dot.online{background:#43a047}#awb .dot.idle{background:#fbc02d}#awb .dot.offline{background:#757575}
     #awb .star{cursor:pointer;color:#666;user-select:none}#awb .star.on{color:#ffd54f}
-    #awb .bsp.g{background:#2e7d32!important}#awb .bsp.a{background:#f9a825!important;color:#000!important}
+    #awb .ffb.g{background:#2e7d32!important}#awb .ffb.a{background:#f9a825!important;color:#000!important}#awb .ffb.r{background:#b71c1c!important}
     #awb .row.called{opacity:.55}#awb .row.called .nm::after{content:" 📢";font-size:10px}
     .awb-inl{font-family:monospace!important;font-weight:bold!important}
     .awb-inl.awb-h{color:#ff6b6b!important}.awb-inl.awb-s{color:#ffb84d!important}.awb-inl.awb-o{color:#6bdc6b!important}
@@ -463,9 +501,10 @@
       <label>Open attacks in a new tab <input type="checkbox" data-k="newTab"></label>
       <label>Chat message on separate lines <input type="checkbox" data-k="multiLine"></label>
       <label>Countdowns in the page's status column <input type="checkbox" data-k="inline"></label>
-      <label>Your total battle stats (e.g. 2.5b) <input type="text" data-k="myStats" style="width:90px" placeholder="for BSP colours"></label>
-      <label>Hide targets much stronger than you <input type="checkbox" data-k="hideRed"></label>
-      <label title="BSP is a paid service; check its terms before posting its figures where others can see them">Include BSP figures in chat message <input type="checkbox" data-k="bspChat"></label>
+      <label>FFScouter estimates <input type="checkbox" data-k="ffOn"></label>
+      <label title="A Torn key you have registered at ffscouter.com. Leave blank if the API key above is that key.">FFScouter key (blank = same) <input type="password" data-k="ffKey" placeholder="same as above"></label>
+      <label>Hide targets above FF 3.5 <input type="checkbox" data-k="hideRed"></label>
+      <label>Include stat estimate in chat message <input type="checkbox" data-k="ffChat"></label>
       <label>★ alert seconds before release <input type="number" min="0" max="300" data-k="alertSec"></label>
       <label>Alert sound <input type="checkbox" data-k="sound"></label>
       <label>★ browser notification <input type="checkbox" data-k="notify"></label>
@@ -575,7 +614,7 @@
           else S[k] = i.value.trim();
         });
         if (S.count < 1) S.count = 3;
-        save(); applyRows(); cfg.style.display = 'none'; members = []; factionName = ''; enemyId = ''; warCheckedAt = 0; refresh();
+        save(); applyRows(); ff.clear(); ffAt = 0; cfg.style.display = 'none'; members = []; factionName = ''; enemyId = ''; warCheckedAt = 0; refresh();
         break;
     }
   });
@@ -631,7 +670,7 @@
         lastSig = sig;
         const tgt = S.newTab ? ' target="_blank"' : '';
         body.innerHTML = list.length ? list.map(m => `<div class="row" data-id="${m.id}">
-          <span class="nm"><span class="star" data-star="${m.id}" title="Watch: alert before release">☆</span> <span class="dot"></span><a href="${profileUrl(m.id)}" target="_blank">${esc(m.name)}</a> <span class="bsp"></span> <span class="muted">L${m.level}</span></span>
+          <span class="nm"><span class="star" data-star="${m.id}" title="Watch: alert before release">☆</span> <span class="dot"></span><a href="${profileUrl(m.id)}" target="_blank" title="Level ${m.level}">${esc(m.name)}</a> <span class="ffb"></span> <span class="muted est"></span></span>
           <span class="t"></span>
           <a class="atk" href="${attackUrl(m.id)}"${tgt} title="Attack ${esc(m.name)}">Attack</a></div>`).join('')
           : '<div class="muted" style="padding:6px 0">No targets match the filter.</div>';
@@ -641,9 +680,10 @@
         const m = byId.get(row.dataset.id); if (!m) return;
         const left = m.until - t;
         const h = inHosp(m, t);
-        const b = row.querySelector('.bsp'), bv = bsp.get(String(m.id)) || '';
-        if (b.textContent !== bv) { b.textContent = bv; b.title = bv ? 'BSP estimate' : ''; }
-        b.className = 'bsp ' + bspClass(m.id);
+        const b = row.querySelector('.ffb'), bv = ffText(m.id), ev = estText(m.id);
+        if (b.textContent !== bv) { b.textContent = bv; b.title = bv ? `Fair fight ${bv} (FFScouter)${ev ? ` · est. stats ${ev}` : ''}` : ''; }
+        b.className = 'ffb ' + ffClass(m.id);
+        const e = row.querySelector('.est'); if (e.textContent !== ev) e.textContent = ev;
         const st = row.querySelector('.star'), on = watch.has(String(m.id));
         if (st.classList.contains('on') !== on) { st.classList.toggle('on', on); st.textContent = on ? '★' : '☆'; }
         const dot = row.querySelector('.dot');
@@ -663,9 +703,11 @@
     const hospCount = members.filter(m => inHosp(m, t)).length;
     // A timer just ran out: refresh soon so a re-hospitalised player isn't left showing OUT.
     if (members.some(m => m.state === 'Hospital' && !m.pending && m.until <= t && m.until > t - 2)) requestRefresh();
-    box.querySelector('.status').textContent = lastFetch
-      ? `${hospCount} in hosp · updated ${Math.max(0, t - lastFetch)}s ago`
+    const st = box.querySelector('.status');
+    st.textContent = lastFetch
+      ? `${hospCount} in hosp · updated ${Math.max(0, t - lastFetch)}s ago${ffError ? ' · ⚠ FF' : ''}`
       : '';
+    st.title = ffError;
   }
 
   // ---------- Loop ----------
@@ -698,42 +740,6 @@
       row = up;
     }
     return row;
-  }
-
-  // ---------- BSP (Battle Stats Predictor) ----------
-  // Read-only: picks up the BSP figure your BSP script has already drawn next to each player on
-  // the page, with BSP's own browser cache as a fallback. Nothing is requested from BSP's servers.
-  const bsp = new Map();          // player id -> text such as "2q"
-  const BSP_RE = /^\s*[\d.,]+\s*[kmbtq]?\s*$/i;
-  function fmtBig(n) {
-    n = Number(n); if (!isFinite(n) || n <= 0) return '';
-    const u = [['q', 1e15], ['t', 1e12], ['b', 1e9], ['m', 1e6], ['k', 1e3]];
-    for (const [s, v] of u) if (n >= v) { const x = n / v; return (x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2)).replace(/\.?0+$/, '') + s; }
-    return String(Math.round(n));
-  }
-  function scanBspPage() {
-    document.querySelectorAll('a[href*="profiles.php?XID="]').forEach(a => {
-      if (a.closest('#awb, [class*="chat" i], [id*="chat" i]')) return;
-      const id = (/XID=(\d+)/.exec(a.href) || [])[1]; if (!id) return;
-      const row = playerRow(a);
-      for (const el of row.querySelectorAll('.iconStats, [class*="iconStats"], [class*="bsp" i]')) {
-        const txt = el.textContent.trim();
-        if (txt && BSP_RE.test(txt)) { bsp.set(id, txt.replace(/\s+/g, '')); break; }
-      }
-    });
-  }
-  function scanBspStorage() {
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (!/battlestatspredictor/i.test(k)) continue;   // BSP's own cache entries only
-        const id = (/(\d{3,})\D*$/.exec(k) || [])[1];
-        if (!id || bsp.has(id)) continue;
-        let v; try { v = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }
-        const n = v && (v.TBS ?? v.TBS_Raw ?? v.Result ?? v.tbs ?? v.Score);
-        const f = fmtBig(n); if (f) bsp.set(id, f);
-      }
-    } catch (e) { /* storage not readable; page scan still works */ }
   }
 
   // ---------- Sort the page's enemy list by hospital time ----------
@@ -825,6 +831,5 @@
   }).observe(document.body, { childList: true, subtree: true });
 
   applyRows();
-  setInterval(() => { scanBspPage(); render(); paintInline(); sortPage(); checkAlerts(); }, 1000);
-  scanBspStorage(); setInterval(scanBspStorage, POLL_MS);
+  setInterval(() => { render(); paintInline(); sortPage(); checkAlerts(); }, 1000);
 })();

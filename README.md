@@ -13,7 +13,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | Mission Mod Checker | Missions page (`page.php?sid=missions`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-mission-mod-checker.user.js) |
 | High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
 | Quick Mail | Any Torn page with player names | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-quick-mail.user.js) |
-| War Board | Faction pages (`factions.php`) | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-war-board.user.js) |
+| War Board | Faction pages (`factions.php`) | Public (+ FFScouter key) | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-war-board.user.js) |
 
 ## Installing
 
@@ -172,19 +172,19 @@ A floating panel on faction pages listing the enemy faction's members, with live
 - **⚙ settings:** Public API key, enemy faction ID (leave blank and it uses your faction's current ranked war opponent from the API; type an ID to override), targets per message, an "only out within N minutes" filter, and whether to list enemies already out.
 - Countdowns also replace the **Hospital** text in the page's own member list (faction profile and war pages) for the enemy faction. Turn this off in ⚙ if another script already does it.
 - Countdowns turn orange in the last two minutes.
-- If you run **Battle Stats Predictor (BSP)**, each target's BSP figure is shown in the panel (and in the chat message if you turn that on in ⚙). It is read from what BSP has already put on the page (or BSP's cache in your browser); nothing extra is requested.
+- **FFScouter estimates:** each target shows a fair-fight badge (green up to 2.5, amber up to 3.5, red above) and an estimated battle-stat total, from [FFScouter](https://ffscouter.com)'s free API. Needs a Torn key you have registered at ffscouter.com (the one you use for FF Scouter V2): put it in ⚙ under **FFScouter key**, or leave that blank if your War Board API key is the registered one. One bulk request every 5 minutes, or when new enemies appear. Fair fight is relative to you, so the chat message shares the stat estimate, not your FF.
 - **⇅** re-orders the page's own enemy list by hospital time: enemies already out first, then soonest out, then travelling/jailed. Click again to go back to Torn's order. The button turns green while sorting is on.
 - **Online dot** before each name: green online, yellow idle, grey offline (hover for last action). Also added to the chat message.
 - **★ Watch list:** click the star next to a target. You get a beep, a browser notification and an on-screen notice when they are about to come out (10 s before by default) or are released early.
 - **Chain bar:** shows your faction's chain count and timer. Below 60 s (adjustable) it flashes, beeps and offers the best target that is out right now.
-- **BSP colours:** enter your total battle stats in ⚙ (e.g. `2.5b`). BSP badges turn green (weaker than you), amber (similar) or red (much stronger). Option to hide red targets.
+- **Hide hard targets:** option in ⚙ to hide anyone above fair fight 3.5.
 - **Travelling / abroad** list under the targets, with destination and, if the script saw them leave, the time they left.
 - **Called targets:** targets you have posted to chat are dimmed with 📢 and skipped by the next post for 3 minutes (adjustable), or until they are hit again.
 - **▲ fewer / more ▼** under the list changes how many targets show before scrolling (3 at a time); set an exact number in ⚙.
 - **Drag** the title bar to move the panel; it remembers its position. Double-click the title bar to reset it to the bottom right.
 - Refreshes from the API every 15 seconds while the panel is open, and early (at most every 4 seconds) when the page's live status changes or a timer runs out. If the page shows an enemy back in hospital before the API has the new time, they show as **Hosp…** rather than OUT.
 
-- **BSP in chat** is off by default. BSP is a paid service, so check its terms before turning on **Include BSP figures in chat message** in ⚙. The figures always show in your own panel.
+- **Stat estimate in chat** is on by default and can be turned off in ⚙. FFScouter states that estimates from its free API may be used and shared by anyone, free of charge.
 - **One caller per war works best.** The "called" list is kept on your own screen only, so if several people post, they may post the same targets. Agree in the faction who posts.
 - Built for desktop browsers with Tampermonkey; Torn PDA on mobile may not support everything it uses.
 
@@ -192,15 +192,16 @@ A floating panel on faction pages listing the enemy faction's members, with live
 
 | | |
 |---|---|
-| Key access level | **Public** is all it needs. |
-| Key storage | Saved in Tampermonkey in your own browser. Sent only to `api.torn.com`, never anywhere else and never in this repository. |
+| Key access level | **Public** is all War Board needs from Torn. For FFScouter, use the key you registered there (FFScouter recommends a Custom key). |
+| Key storage | Saved in Tampermonkey in your own browser, never in this repository. The Torn API key is sent only to `api.torn.com`; the FFScouter key only to `ffscouter.com`. |
 | Data read | Your faction's current ranked war and chain; the enemy faction's member list (names, levels, status, hospital times, last action). |
 | Data stored | Your settings, starred players and panel position, in Tampermonkey on your browser. Nothing is stored on any server. |
-| Data shared | Nothing is sent anywhere automatically. The chat message is only what you choose to post. |
+| Data shared | With FFScouter estimates on (default): your FFScouter key and the enemy player IDs are sent to ffscouter.com to get estimates; turn **FFScouter estimates** off in ⚙ to stop this. Nothing else is sent anywhere. The chat message is only what you choose to post. |
 | Purpose | Showing hospital timers and helping you pick and call targets during wars. |
 
 | Version | Date | Change |
 |---|---|---|
+| 2.0 | 21 Nov 2026 | Switched from BSP to **FFScouter**: fair-fight badge and stat estimate from FFScouter's API; hide-above-FF-3.5 option; stat estimate in chat. BSP reading and the "your battle stats" setting removed. |
 | 1.11 | 20 Nov 2026 | Ready to share: BSP figures left out of the chat message unless you turn them on; BSP cache lookup limited to BSP's own entries; README lists what data and API access the script uses. |
 | 1.10 | 20 Nov 2026 | Choose how many targets show before scrolling: ▲ fewer / more ▼ buttons under the list, or a number in ⚙ (0 = fit the screen). Default 12. |
 | 1.9 | 20 Nov 2026 | Compact one-line rows (about three times as many targets visible), green edge on targets that are out, gold tint on ★ targets, travellers list collapsed behind a click. |
