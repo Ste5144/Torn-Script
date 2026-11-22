@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.10.2
+// @version      1.11.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -30,7 +30,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.10.2';
+  const VERSION = '1.11.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -45,7 +45,7 @@
     minComps: 5,       // comparable sales needed before a deal is graded
     gradeWithinMin: 60, // auctions are graded only when ending within this many minutes
     dmgPerPt: 2.26,
-    bunkerUnlocked: false, // Big Al's Bunker unlocked (2,500 points)
+    bunkerUnlocked: true, // Big Al's Bunker unlocked (2,500 points)
     marketFee: 5,      // % fee when selling a cache on the item market
     resaleFee: 5,      // % fee assumed when reselling a weapon (item market tax is 5%; auction fee unconfirmed)
     flipMargin: 10,    // % profit wanted on a resale or Bunker trade-in before a bid counts as cheap
@@ -539,21 +539,36 @@
       if (isFinite(target.arm) && isFinite(s.arm)) d += Math.abs(s.arm - target.arm) / 1.5;
       const ageDays = (now - s.ts) / 86400;
       const w = Math.exp(-d) * Math.pow(0.5, ageDays / 60);
-      scored.push({ s, d, w });
+      const sameR = !target.rarity || !s.rarity || target.rarity === s.rarity;
+      const m0 = tb.length ? (s.b || []).find((y) => norm(y.t) === norm(tb[0].t)) : null;
+      const close = !tb.length || (m0 && Math.abs(m0.v - tb[0].v) <= 5);
+      scored.push({ s, d, w, sameR, close });
     }
-    scored.sort((a, b) => b.w - a.w);
-    const top = scored.slice(0, 15).filter((x) => x.w > 1e-6);
+    // Strict first: same rarity and main bonus within 5 points. Loosen only when too few.
+    const minC = S.minComps || 5;
+    const tierA = scored.filter((x) => x.sameR && x.close);
+    const tierB = scored.filter((x) => x.sameR);
+    let use = scored;
+    let loose = scored.some((x) => !x.sameR) ? 'rarity' : (scored.some((x) => !x.close) ? 'bonus' : '');
+    if (tierA.length >= minC) { use = tierA; loose = ''; }
+    else if (tierB.length >= minC) { use = tierB; loose = tierB.some((x) => !x.close) ? 'bonus' : ''; }
+    use.sort((a, b) => b.w - a.w);
+    const top = use.slice(0, 15).filter((x) => x.w > 1e-6);
     // Weights choose the closest sales; the price bands treat those sales equally,
     // so one near-identical sale (often the same weapon resold) cannot set all three figures.
     const pairs = top.map((x) => ({ v: x.s.price, w: 1 }));
-    return {
+    const out = {
       n: top.length,
       pool: pool.length,
       p25: wQuantile(pairs, 0.25),
       p50: wQuantile(pairs, 0.5),
       p75: wQuantile(pairs, 0.75),
       comps: top.map((x) => x.s),
+      loose,
+      sameN: tierB.length,
     };
+    out.wide = out.n >= minC && out.p25 > 0 && out.p75 / out.p25 > 2;
+    return out;
   }
 
   // Deal grade: price against the comparable-sales quartiles.
@@ -561,6 +576,9 @@
     if (!v || !v.n || !isFinite(price) || price <= 0) return { k: '', label: 'No history', cls: 'muted', pct: NaN };
     if (v.n < (S.minComps || 5)) return { k: '', label: `Only ${v.n} comparable sale${v.n === 1 ? '' : 's'}`, cls: 'muted', pct: (price / v.p50 - 1) * 100, thin: true };
     const pct = (price / v.p50 - 1) * 100; // + = above fair
+    // Other rarities price very differently, so do not grade on them.
+    if (v.loose === 'rarity') return { k: '', label: `Only ${v.sameN} ${v.sameN === 1 ? 'sale' : 'sales'} of the same rarity (need ${S.minComps || 5})`, cls: 'muted', pct, thin: true };
+    if (v.wide) return { k: '', label: 'Wide price range', cls: 'muted', pct, wide: true };
     if (price <= v.p25) return { k: 'great', label: 'Great deal', cls: 'g-ex', pct };
     if (price <= v.p50) return { k: 'good', label: 'Good', cls: 'g-gd', pct };
     if (price <= v.p75) return { k: 'fair', label: 'Fair', cls: 'g-fr', pct };
@@ -1253,6 +1271,8 @@
   // If the API returns nothing for a live auction, stats are read from the page text instead.
   const AH = new Map(); // auctionId -> {status:'pending'|'api'|'dom', data}
   const AH_CSS = `
+    .ac-ah .hd{font-size:12px}.ac-ah .mx{font-size:12.5px}.ac-ah .vd{margin-top:2px}.ac-ah details.dt{margin-top:2px}.ac-ah details.dt summary{cursor:pointer;color:#aaa;font-size:10.5px}.ac-ah .m2{color:#ccc;font-size:10.5px;margin:2px 0}
+    li.ac-ending .ac-ah{opacity:.45}li.ac-ending{opacity:.75}
     .ac-ah{margin:4px 6px 6px;padding:4px 6px;border-radius:5px;font:11px/1.35 Arial,sans-serif;color:#fff !important;background:#2a2a2a;border:1px solid #666;clear:both}
     .ac-ah b{color:#fff !important}
     .ac-ah .m{color:#cfcfcf !important}
@@ -1270,8 +1290,8 @@
     li.ac-hl-good{outline:2px solid #8fd14f !important;outline-offset:-2px}
     li.ac-hl-flip{outline:3px solid #f2c94b !important;outline-offset:-3px}
     .ac-ah .pf{margin-top:3px;padding-top:3px;border-top:1px solid #555}
-    .ac-ah .pf .y{color:#7dff9a !important;font-weight:bold}
-    .ac-ah .pf .n{color:#ff9a9a !important}
+    .ac-ah .y{color:#7dff9a !important;font-weight:bold}
+    .ac-ah .n{color:#ff9a9a !important}
     .ac-ah button{background:#444;color:#fff;border:1px solid #777;border-radius:4px;padding:1px 6px;cursor:pointer;font-size:11px;margin-left:4px}
   `;
   function ahListings() {
@@ -1366,6 +1386,7 @@
       try { const old = (await kvGet('ahseen')) || {}; await kvSet('ahseen', Object.assign(old, SEEN)); } catch (e) { /* ignore */ }
     }, 1500);
   }
+  const AH_OPEN = new Set(); // listings whose detail section is open
   function ahBadge(li, d, price) {
     const left = ahTimeLeft(li);
     recordSeen(d, price, left);
@@ -1376,55 +1397,92 @@
     let deal = dealOf(price, v);
     const fl = bunkerFloor(Object.assign({}, d, { rarity: d.rarity }));
     const pc = profitCheck(price, v, fl);
-    const bunkerOk = pc.bunker && pc.bunker.ok && S.bunkerUnlocked;
-    const meetsMargin = !!((pc.resale && pc.resale.ok) || bunkerOk);
+    if (deal.wide || deal.thin) pc.resale = null; // resale value not trusted on mixed or scattered sales
+    const resaleOk = !!(pc.resale && pc.resale.ok);
+    const bunkerOk = !!(pc.bunker && pc.bunker.ok && S.bunkerUnlocked);
+    const meetsMargin = resaleOk || bunkerOk;
     let capped = '';
     if (S.greenNeedsMargin && (deal.k === 'great' || deal.k === 'good') && !meetsMargin) {
       capped = deal.k;
       deal = Object.assign({}, deal, { k: 'fair', label: (capped === 'great' ? 'Great' : 'Good') + ' vs fair, but under your ' + fmt(S.flipMargin) + '% profit' });
     }
     const early = isFinite(left) && left > (S.gradeWithinMin || 60) * 60;
+    const ending = isFinite(left) && left < 30;
     let tone = '';
     if (early && deal.k) { tone = 'e-' + deal.k; deal = Object.assign({}, deal, { early: true, k: '' }); }
-    li.classList.remove('ac-hl-great', 'ac-hl-good');
-    if (deal.k === 'great' || deal.k === 'good') li.classList.add('ac-hl-' + deal.k);
-    if (!tone) tone = deal.k || (deal.thin ? 'thin' : 'none');
+    li.classList.remove('ac-hl-great', 'ac-hl-good', 'ac-hl-flip', 'ac-ending');
+    if (ending) li.classList.add('ac-ending');
+    else {
+      if (deal.k === 'great' || deal.k === 'good') li.classList.add('ac-hl-' + deal.k);
+      if (meetsMargin) li.classList.add('ac-hl-flip');
+    }
+    if (!tone) tone = deal.k || (deal.thin || deal.wide ? 'thin' : 'none');
     box.className = 'ac-ah ' + tone;
+
     const src = d.src === 'api' ? '' : ' <span class="m">(stats read from page)</span>';
     const idx = d.type === 'Armor' || (!isFinite(d.dmg) && isFinite(d.arm)) ? '' : ` · Index <b>${fmt(indexOf(d.dmg, d.b), 1)}</b>`;
     const bon = (d.b || []).map((x) => { const n = guideNote(x.t, x.v, d.rarity); return esc(x.t) + ' ' + esc(x.v) + '%' + (n ? ' [' + esc(n) + ']' : ''); }).join(', ') || 'no bonus';
     const under = fl.bb && isFinite(fl.floor) && isFinite(price) && price < fl.floor;
     const flTxt = fl.bb ? ` · Bunker floor <b>${floorText(fl)}</b>${under ? ' <b>(bid under trade-in value)</b>' : ''}${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}` : '';
-    li.classList.remove('ac-hl-flip');
-    if ((pc.resale && pc.resale.ok) || bunkerOk) li.classList.add('ac-hl-flip');
+    const timeTxt = !isFinite(left) ? '' : left < 60 ? Math.max(0, Math.round(left)) + 's' : left < 3600 ? Math.floor(left / 60) + 'm' : Math.floor(left / 3600) + 'h ' + Math.floor((left % 3600) / 60) + 'm';
+    const endTxt = timeTxt ? ` · ends ${timeTxt}${ending ? ' <span class="m">(closing, too late to act)</span>' : early ? ' <span class="m">(bid not final)</span>' : ''}` : '';
+
+    // Top line: the figure to act on.
+    const opts = [];
+    if (pc.resale) opts.push({ k: 'resale', max: pc.resale.max });
+    if (pc.bunker && S.bunkerUnlocked) opts.push({ k: 'Bunker', max: pc.bunker.max });
+    opts.sort((x, y) => y.max - x.max);
+    const best = opts[0];
+    const head = best
+      ? `<b class="mx">Max bid ${money(best.max)}</b> <span class="m">(${best.k}, ${fmt(S.flipMargin)}% profit)</span> · now <b>${money(price)}</b> ${best.max >= price ? `<span class="y">${money(best.max - price)} headroom</span>` : `<span class="n">${money(price - best.max)} over</span>`}${endTxt}`
+      : `now <b>${money(price)}</b>${endTxt}`;
+
+    const keyOk = /^[A-Za-z0-9]{16}$/.test(S.key);
+    const looseTxt = v.loose === 'rarity' ? ' · <span class="n">loose match: other rarities included</span>' : v.loose === 'bonus' ? ' · <span class="n">loose match: bonus % differs by more than 5</span>' : '';
+    let verdict = '';
+    let line2 = '';
+    let btnTxt = 'Refresh';
+    if (!v.n && AH_FETCHING.has(norm(d.name))) {
+      box.className = 'ac-ah none';
+      verdict = `Loading auction history for ${esc(d.name)}…`; btnTxt = '';
+      line2 = `This box updates by itself${idx}${flTxt}${src}`;
+    } else if (!v.n && !keyOk) {
+      verdict = 'No auction history yet'; btnTxt = '';
+      line2 = `Add your Public API key in Archer Console Settings (Alt+A) and history will load by itself${idx}${flTxt}${src}`;
+    } else if (!v.n && AH_ERR) {
+      verdict = 'Could not load history'; btnTxt = 'Try again';
+      line2 = `${esc(AH_ERR)}${idx}${flTxt}${src}`;
+    } else if (!v.n) {
+      verdict = 'No auction history cached'; btnTxt = 'Fetch history';
+      line2 = `${esc(d.name)} (${bon})${idx}${flTxt}${src}`;
+    } else if (deal.thin) {
+      verdict = `Not enough history: ${esc(deal.label.replace(/^Only /, 'only '))}`; btnTxt = 'Fetch more history';
+      line2 = `Median of the nearest ${v.n} sales ${money(v.p50)}${looseTxt}${idx}${flTxt} · ${bon}${src}`;
+    } else {
+      if (deal.wide) verdict = `Wide price range: comparable sales run ${money(v.p25)} to ${money(v.p75)}, check before bidding`;
+      else if (deal.early) {
+        verdict = capped ? 'Below fair so far, but not under your ' + fmt(S.flipMargin) + '% profit max bid'
+          : ({ great: 'Great so far', good: 'Below fair so far', fair: 'Fair so far', over: 'Already over ceiling' }[tone.slice(2)] || '');
+      } else verdict = esc(deal.label);
+      verdict += ` <span class="m">(${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair)</span>`;
+      line2 = `Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${looseTxt}${idx}${flTxt} · ${bon}${src}`;
+    }
     const pLine = (label, r, extra) => {
       if (!r) return '';
       const at = early ? 'at the current bid' : 'at this price';
-      return `<div>${label}: worth <b>${money(r.net)}</b>${extra} · ${r.ok ? `<span class="y">CHEAP: +${money(r.profit)} (+${fmt(r.pct)}%) ${at}</span>` : `<span class="n">${r.profit >= 0 ? '+' + money(r.profit) + ' (' + fmt(r.pct) + '%), under ' + S.flipMargin + '% margin' : 'loss ' + money(-r.profit)} ${at}</span>`} · max bid <b>${money(r.max)}</b> for ${S.flipMargin}% profit</div>`;
+      return `<div>${label}: worth <b>${money(r.net)}</b>${extra} · ${r.ok ? `<span class="y">+${money(r.profit)} (+${fmt(r.pct)}%) ${at}</span>` : `<span class="n">${r.profit >= 0 ? '+' + money(r.profit) + ' (' + fmt(r.pct) + '%), under ' + S.flipMargin + '% margin' : 'loss ' + money(-r.profit)} ${at}</span>`} · max bid <b>${money(r.max)}</b></div>`;
     };
-    const pfHtml = (pc.resale || pc.bunker)
-      ? `<div class="pf">${pLine('Resell', pc.resale, ` (${S.resaleBasis === 'p25' ? 'lower-quarter' : 'median'} sale less ${S.resaleFee}% fee)`)}${pLine('Bunker Bucks', pc.bunker, ` (${fl.bb} BB; caches sold less ${S.marketFee}% fee)${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}`)}${early ? '<div class="m">Bid not final: it is only cheap if it finishes at or under the max bid.</div>' : ''}</div>`
-      : (v.n && v.n < (S.minComps || 5) ? `<div class="pf m">Resale: needs ${S.minComps} comparable sales to judge.</div>` : '');
-    const hrs = isFinite(left) ? (left >= 3600 ? Math.floor(left / 3600) + 'h ' + Math.floor((left % 3600) / 60) + 'm' : Math.floor(left / 60) + 'm') : '?';
-    const keyOk = /^[A-Za-z0-9]{16}$/.test(S.key);
-    if (!v.n && AH_FETCHING.has(norm(d.name))) {
-      box.className = 'ac-ah none';
-      box.innerHTML = `<b>Loading auction history for ${esc(d.name)}…</b> This box updates by itself.${idx}${flTxt}${src}`;
-    } else if (!v.n && !keyOk) {
-      box.innerHTML = `<b>No auction history yet.</b> Add your Public API key in Archer Console Settings (Alt+A) and history will load by itself.${idx}${flTxt}${src}`;
-    } else if (!v.n && AH_ERR) {
-      box.innerHTML = `<b>Could not load history:</b> ${esc(AH_ERR)}${idx}${flTxt}${src} <button data-f="1">Try again</button>`;
-    } else if (!v.n) {
-      box.innerHTML = `<b>No auction history cached</b> for ${esc(d.name)} (${bon})${idx}${flTxt}${src} <button data-f="1">Fetch history</button>`;
-    } else if (deal.thin) {
-      box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
-    } else if (deal.early) {
-      const band = capped ? 'below fair, but not yet under your ' + fmt(S.flipMargin) + '% profit max bid' : { great: 'still in great-buy range', good: 'still below fair', fair: 'above fair, below ceiling', over: 'already over ceiling' }[tone.slice(2)] || '';
-      box.innerHTML = `<b>Ends in ${hrs}: bid not final, ${band}.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
-    } else {
-      box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
+    const pf = (pc.resale || pc.bunker)
+      ? `${pLine('Resell', pc.resale, ` (${S.resaleBasis === 'p25' ? 'lower-quarter' : 'median'} sale less ${S.resaleFee}% fee)`)}${pLine('Bunker Bucks', pc.bunker, ` (${fl.bb} BB; caches sold less ${S.marketFee}% fee)${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}`)}`
+      : '';
+    box.innerHTML = `<div class="hd">${head}</div>`
+      + `<div class="vd"><b>${verdict}</b>${btnTxt ? ` <button data-f="1">${btnTxt}</button>` : ''}</div>`
+      + `<details class="dt"${AH_OPEN.has(li.id) ? ' open' : ''}><summary>Details</summary><div class="m2">${line2}</div>${pf ? `<div class="pf">${pf}</div>` : ''}</details>`;
+    const det = box.querySelector('details');
+    if (det) {
+      det.addEventListener('click', (e) => e.stopPropagation());
+      det.addEventListener('toggle', () => { if (det.open) AH_OPEN.add(li.id); else AH_OPEN.delete(li.id); });
     }
-    if (pfHtml) box.insertAdjacentHTML('beforeend', pfHtml);
     const btn = box.querySelector('button[data-f]');
     if (btn) btn.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();

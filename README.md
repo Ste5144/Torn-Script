@@ -103,6 +103,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 | Version | Date | Change |
 |---|---|---|
+| 1.11.0 | 22 Nov 2026 | Comparables: same rarity and main bonus within 5 points first, loosened only when fewer than 5 match (labelled "loose match"); fewer than 5 sales of the same rarity is not graded. Wide price range (ceiling more than double the Great price) shows purple with a warning, and resale is not used. Box layout: top line is the max bid (best of resale and Bunker at your profit wanted), current bid, headroom and time left; verdict second; figures and profit detail under a Details toggle. Auctions under 30 s are greyed out. Bunker unlocked is now the default. |
 | 1.10.2 | 22 Nov 2026 | Removed the "Capture auction page" troubleshooting button from the Auction House. |
 | 1.10.1 | 22 Nov 2026 | Swervelord requests are sent without cookies, so your Swervelord login is never attached (the archive needs no login). |
 | 1.10.0 | 22 Nov 2026 | Swervelord's sale archive added as a second history source (read-only, no key): 6 pages (300 sales) per item on first sight, then 1 page per hourly top-up, filtered to the exact item and de-duplicated against Torn API sales. Gentle rate (1 call per 1.5 s, only items on screen). Settings tick box "Also use Swervelord sale history". Tampermonkey asks once to allow swervelord.dev. |
