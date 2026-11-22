@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Scalper (display only)
 // @namespace    sterlingarcher.scalper
-// @version      1.1.1
+// @version      1.1.2
 // @description  Display only. On any bazaar, badges each item with its resale value (lowest item market listing less tax, or Torn market value) and profit at the bazaar price. Green = beats your margin. Public API key only; never buys.
 // @author       SterlingArcher
 // @match        https://www.torn.com/bazaar.php*
@@ -31,7 +31,7 @@
   'use strict';
   if (window.__bzScalper) return;
   window.__bzScalper = true;
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   const LS = 'bzScalper.cfg';
   const API = 'https://api.torn.com/v2/';
   const DEF = {
@@ -41,6 +41,7 @@
     sellVia: 'market', // market = item market (5% tax), bazaar = your bazaar (no tax, slower)
     tax: 5,
     undercut: 1,       // $ below the lowest listing you would list at
+    useNpc: false,     // count Torn's NPC sell price as a resale route (off: the API figure is unverified)
     sortBy: 'total',   // total = whole-stack profit; pct = margin %
     minStack: 50000,   // hide deals whose whole-stack profit is under this
     watch: ['Xanax', 'Feathery Hotel Coupon', 'Can of Red Cow', 'Can of Munster', 'Can of Rockstar Rudolph', 'Can of Goose Juice',
@@ -182,7 +183,7 @@
     let net = basis * taxM;
     // Selling to the NPC shop is instant and tax-free; use it when it pays more.
     const npc = it.sell > 0 && c.price < it.sell ? it.sell - c.price : 0;
-    if (it.sell > net) { net = it.sell; src = 'NPC shop'; }
+    if (S.useNpc && it.sell > net && (!it.mv || it.sell < it.mv)) { net = it.sell; src = 'NPC shop'; }
     const profit = net - c.price;
     const pct = c.price > 0 ? profit / c.price * 100 : NaN;
     const ok = profit >= S.minProfit && pct >= S.minPct;
@@ -204,9 +205,13 @@
     #bzs-panel input,#bzs-panel select{width:100%;box-sizing:border-box;background:#0f0d15;color:#eee;border:1px solid #555;border-radius:4px;padding:3px;margin:2px 0 6px}
     #bzs-panel button{background:#2e6b3a;color:#fff;border:none;border-radius:4px;padding:4px 9px;cursor:pointer;margin-right:4px}
     #bzs-panel table{width:100%;border-collapse:collapse;margin-top:6px}
-    #bzs-panel td{padding:2px 3px;border-top:1px solid #333}
+    #bzs-panel, #bzs-panel td, #bzs-panel b, #bzs-panel div, #bzs-panel label{color:#f2f2f2 !important}
+    #bzs-panel td{padding:3px 3px;border-top:1px solid #3a3a3a;vertical-align:top}
+    #bzs-panel tr.ok td{background:#16301c}
+    #bzs-panel a{color:#8cc8ff !important}
     #bzs-panel .num{text-align:right}
-    #bzs-panel .m{color:#aaa}
+    #bzs-panel .m, #bzs-panel .m *{color:#b8b8b8 !important}
+    #bzs-panel .pos{color:#7dff9a !important;font-weight:bold}
   `;
   function badge(c, it, im) {
     const host = c.info || c.el;
@@ -225,7 +230,7 @@
     b.title = [
       `${it.name}: bazaar ${money(c.price)}${c.qty > 1 ? ' × ' + c.qty : ''}`,
       im && im.low ? `Lowest item market listing ${money(im.low)}${im.second ? ', next ' + money(im.second) : ''}` : `Market value ${money(it.mv)} (listings ${pending ? 'being checked' : 'not checked: priced above market value'})`,
-      it.sell ? `NPC shop pays ${money(it.sell)}` : '',
+      S.useNpc && it.sell ? `NPC sell value ${money(it.sell)}` : '',
       `Resale ${money(j.net)} via ${via}`,
       `Profit ${money(j.profit)} each (${isFinite(j.pct) ? j.pct.toFixed(1) : '?'}%)${c.qty > 1 ? ', ' + money(j.total) + ' for all' : ''}`,
     ].filter(Boolean).join('\n');
@@ -311,7 +316,7 @@
           const viaBazaar = Math.min(im && im.low > 0 ? im.low : Infinity, nextBz(k)) - (S.undercut || 0);
           let net = S.sellVia === 'bazaar' && isFinite(viaBazaar) ? viaBazaar : viaMarket;
           let src = S.sellVia === 'bazaar' && isFinite(viaBazaar) ? 'own bazaar' : 'item market';
-          if (it.sell > net) { net = it.sell; src = 'NPC shop'; }
+          if (S.useNpc && it.sell > net && (!it.mv || it.sell < it.mv)) { net = it.sell; src = 'NPC shop'; }
           const each = net - x.price;
           if (each <= 0) return;
           const qty = +x.quantity || 1;
@@ -341,10 +346,10 @@
     if (!box) return;
     const rows = DEALS.filter((d) => d.total >= (S.minStack || 0)).sort((a, b) => (b.ok - a.ok) || (S.sortBy === 'pct' ? b.pct - a.pct : b.total - a.total)).slice(0, 40);
     box.innerHTML = sortBar() + `<div class="m">${esc(dealMsg)}</div>`
-      + (rows.length ? `<table><tr class="m"><td>Item / seller</td><td class="num">Price × qty</td><td class="num">Profit</td></tr>${rows.map((d) => `<tr>
+      + (rows.length ? `<table><tr class="m"><td>Item / seller</td><td class="num">Price × qty</td><td class="num">Profit</td></tr>${rows.map((d) => `<tr class="${d.ok ? 'ok' : ''}">
         <td>${d.ok ? '✅ ' : ''}<b>${esc(d.name)}</b><br><a href="https://www.torn.com/bazaar.php?userId=${d.pid}" target="_blank" rel="noopener" style="color:#7fb8ff">${esc(d.seller)}</a> <span class="m">seen ${ago(d.age)} ago</span></td>
         <td class="num">${money(d.price)}<br><span class="m">× ${d.qty.toLocaleString('en-US')}</span></td>
-        <td class="num"><b>${money(d.total)}</b><br><span class="m">${money(d.each)} each · ${d.pct.toFixed(1)}%</span><br><span class="m">sell ${money(d.net)} ${esc(d.src)}</span></td></tr>`).join('')}</table>`
+        <td class="num"><span class="pos">${money(d.total)}</span><br><span class="m">${money(d.each)} each · ${d.pct.toFixed(1)}%</span><br><span class="m">sell ${money(d.net)} ${esc(d.src)}</span></td></tr>`).join('')}</table>`
         : (dealBusy ? '' : `<div class="m" style="margin-top:6px">No bazaar deals above your stack minimum (${money(S.minStack)}).</div>`));
   }
 
@@ -382,6 +387,7 @@
         and at least %<input id="bzs-pct" type="number" step="0.5" value="${S.minPct}">
         Hide deals whose whole stack makes under $<input id="bzs-stack" type="number" value="${S.minStack}">
         Sell via<select id="bzs-via"><option value="market" ${S.sellVia === 'market' ? 'selected' : ''}>Item market (${S.tax}% tax, fast)</option><option value="bazaar" ${S.sellVia === 'bazaar' ? 'selected' : ''}>My bazaar (no tax, slower)</option></select>
+        <label style="display:block;margin-bottom:6px"><input type="checkbox" id="bzs-npc" ${S.useNpc ? 'checked' : ''} style="width:auto"> Count NPC shop sell price as a resale route</label>
         Watchlist for Deals (one item name per line)<textarea id="bzs-watch" rows="7" style="width:100%;box-sizing:border-box;background:#0f0d15;color:#eee;border:1px solid #555;border-radius:4px">${esc(S.watch)}</textarea>
         <button id="bzs-save">Save</button><button id="bzs-re">Recheck prices</button>
         <div class="m" style="margin-top:6px">Resale = lowest item market listing less $${S.undercut}, then tax (or the NPC shop if it pays more). Torn caches listings for up to an hour, so check the item market before buying big.</div>
@@ -394,7 +400,7 @@
       const k = p.querySelector('#bzs-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { alertBox('Key should be 16 letters and numbers.'); return; }
       S.key = k; S.minProfit = Math.max(0, +p.querySelector('#bzs-min').value || 0); S.minPct = Math.max(0, +p.querySelector('#bzs-pct').value || 0);
-      S.minStack = Math.max(0, +p.querySelector('#bzs-stack').value || 0); S.sellVia = p.querySelector('#bzs-via').value; S.watch = p.querySelector('#bzs-watch').value;
+      S.minStack = Math.max(0, +p.querySelector('#bzs-stack').value || 0); S.sellVia = p.querySelector('#bzs-via').value; S.watch = p.querySelector('#bzs-watch').value; S.useNpc = p.querySelector('#bzs-npc').checked;
       save(); alertBox('Saved.'); scan();
     };
     const re = p.querySelector('#bzs-re');

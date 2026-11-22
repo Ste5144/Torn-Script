@@ -231,7 +231,7 @@ A floating panel on faction pages listing the enemy faction's members, with live
 
 Display only. On any bazaar, each item gets a badge with its resale value and the profit at the bazaar price.
 
-- **Resale value:** lowest item market listing less $1, less the 5% item market tax (or no tax if you choose "My bazaar"). If no listing has been checked, Torn's market value is used. If the NPC shop pays more, the NPC price is used (instant, no tax).
+- **Resale value:** lowest item market listing less $1, less the 5% item market tax (or no tax if you choose "My bazaar"). If no listing has been checked, Torn's market value is used. The NPC shop sell price is only used if you tick it in Settings (off by default: the API figure looked wrong for Xanax).
 - **Badge:** one line under the stock count (hover for detail). **Green:** profit at least your minimum $ and % (default $100k and 5%). Amber: some profit, under your margin. Grey: no profit.
 - **Scalper button** (bottom right): API key, margin settings, sell route, and a list of the most profitable items on the page.
 - **Deals tab:** for your watchlist (Settings), the cheapest bazaar listings across Torn from Weav3r's crowd-sourced feed (weav3r.dev, no key), with profit per item and for the whole stack, how long ago the listing was seen, and a link to the seller's bazaar. You open and buy yourself; the badge on the bazaar is the live check. One call per item every 1.5 s, only when you press Scan.
@@ -242,6 +242,7 @@ Display only. On any bazaar, each item gets a badge with its resale value and th
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.1.2 | 22 Nov 2026 | Panel text readable (was dark grey on dark), green rows for deals that beat your margin, profit in green. NPC shop route now off by default and only used below market value: it showed Xanax selling to the NPC at $825k, which looks wrong. |
 | 1.1.1 | 22 Nov 2026 | Sort toggle on both lists: Profit $ (whole stack, default) or Margin %. |
 | 1.1.0 | 22 Nov 2026 | Deals tab: cheapest bazaar listings across Torn for a watchlist (Weav3r feed), with stack profit and seller links. Stack-profit filter. Tabs for This bazaar / Deals / Settings. Runs on the Item Market too (Deals only). |
 | 1.0.1 | 22 Nov 2026 | Badge is now one short line under the stock count (was a narrow column overlapping the next item); full detail on hover. Stock count read from "(N in stock)". |
