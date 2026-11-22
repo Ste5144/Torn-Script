@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.10.0
+// @version      1.10.1
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -30,7 +30,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.10.0';
+  const VERSION = '1.10.1';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -347,13 +347,13 @@
   function httpJson(url) {
     if (typeof GM_xmlhttpRequest === 'function') {
       return new Promise((resolve, reject) => GM_xmlhttpRequest({
-        method: 'GET', url, timeout: 20000,
+        method: 'GET', url, timeout: 20000, anonymous: true, // never send your Swervelord login cookies
         onload: (r) => { try { if (r.status !== 200) throw new Error('Swervelord HTTP ' + r.status); resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
         onerror: () => reject(new Error('Swervelord unreachable')),
         ontimeout: () => reject(new Error('Swervelord timed out')),
       }));
     }
-    return fetch(url).then((r) => { if (!r.ok) throw new Error('Swervelord HTTP ' + r.status); return r.json(); });
+    return fetch(url, { credentials: 'omit' }).then((r) => { if (!r.ok) throw new Error('Swervelord HTTP ' + r.status); return r.json(); });
   }
   const r2 = (x) => (x == null || !isFinite(+x) ? undefined : Math.round(+x * 100) / 100);
   function normSwerve(r) {
