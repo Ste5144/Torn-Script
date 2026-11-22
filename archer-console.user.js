@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.9.0
+// @version      1.10.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      swervelord.dev
 // @run-at       document-idle
 // @homepageURL  https://github.com/Ste5144/Torn-Script
 // @updateURL    https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-console.user.js
@@ -19,7 +20,9 @@
     market/{id}/itemmarket, torn/items.
   - Requests are queued at 1 per second by default (Torn limit is 100 per minute per key).
   - Live auctions are not in the API: paste rows from the Swervelord live floor into the Import tab.
-  - Works in Tampermonkey/Violentmonkey and Torn PDA (no GM_ functions).
+  - Extra history source: Swervelord's archive (swervelord.dev/api/auctions/history, read-only, no key),
+    fetched gently (1 call per 1.5 s, only items on screen). Turn off in Settings.
+  - Works in Tampermonkey/Violentmonkey and Torn PDA (GM_xmlhttpRequest used when present, else fetch).
 */
 
 (function () {
@@ -27,7 +30,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.9.0';
+  const VERSION = '1.10.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -46,6 +49,7 @@
     marketFee: 5,      // % fee when selling a cache on the item market
     resaleFee: 5,      // % fee assumed when reselling a weapon (item market tax is 5%; auction fee unconfirmed)
     flipMargin: 10,    // % profit wanted on a resale or Bunker trade-in before a bid counts as cheap
+    useSwerve: true,   // also pull sale history from Swervelord's archive
     greenNeedsMargin: true, // green badge only when the price also clears the profit wanted (resale or Bunker)
     resaleBasis: 'p50', // resale price: p50 = median of comparable sales, p25 = lower quarter (cautious)
     myTypes: 'PST, RFL',
@@ -326,12 +330,71 @@
       if (to) params.to = to;
       const j = await api('market/' + itemId + '/auctionhouse', params);
       const rows = (j.auctionhouse || []).map(normSale).filter(Boolean);
-      const fresh = rows.filter((r) => !have.has(r.id));
+      const keys = new Set(SALES.filter((s) => s.itemId === itemId).map(saleKey));
+      const fresh = rows.filter((r) => !have.has(r.id) && !keys.has(saleKey(r)));
       if (fresh.length) { await dbPut('sales', fresh); fresh.forEach((r) => { SALES.push(r); have.add(r.id); }); added += fresh.length; }
       status(`Item ${itemId}: page ${p + 1}, ${added} new sales`);
       if ((j.auctionhouse || []).length < 100 || !fresh.length) break;
       to = Math.min(...(j.auctionhouse || []).map((r) => r.timestamp)) - 1;
     }
+    return added;
+  }
+
+  // ================= Swervelord archive (extra history source) =================
+  const SWERVE = 'https://swervelord.dev/api/auctions/history';
+  let swLast = 0;
+  let SW_ERR = '';
+  function httpJson(url) {
+    if (typeof GM_xmlhttpRequest === 'function') {
+      return new Promise((resolve, reject) => GM_xmlhttpRequest({
+        method: 'GET', url, timeout: 20000,
+        onload: (r) => { try { if (r.status !== 200) throw new Error('Swervelord HTTP ' + r.status); resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+        onerror: () => reject(new Error('Swervelord unreachable')),
+        ontimeout: () => reject(new Error('Swervelord timed out')),
+      }));
+    }
+    return fetch(url).then((r) => { if (!r.ok) throw new Error('Swervelord HTTP ' + r.status); return r.json(); });
+  }
+  const r2 = (x) => (x == null || !isFinite(+x) ? undefined : Math.round(+x * 100) / 100);
+  function normSwerve(r) {
+    if (!r || !r.item_name) return null;
+    const ts = Math.round(Date.parse(r.ended_at) / 1000);
+    if (!isFinite(ts) || !(r.price > 0)) return null;
+    const it = itemByName(r.item_name) || {};
+    const type = r.item_type || it.type;
+    if (!(type === 'Weapon' || type === 'Armor')) return null;
+    return {
+      id: r.id, ts, price: r.price, bids: r.bids, itemId: r.item_id || it.id, name: r.item_name, type, sub: it.sub || '',
+      rarity: (r.rarity || '').toLowerCase() || null, q: r2(r.quality), dmg: r2(r.damage), acc: r2(r.accuracy), arm: r2(r.armor),
+      b: (r.bonuses || []).map((x) => ({ t: x.name, v: x.value })), seller: r.seller_name || '', buyer: r.buyer_name || '', src: 'swerve',
+    };
+  }
+  const saleKey = (x) => x.itemId + '|' + x.ts + '|' + x.price;
+  // Newest first, 50 per page, filtered by item name.
+  async function fetchSwerveHistory(itemName, maxPages) {
+    if (!S.useSwerve || !itemName) return 0;
+    const it = itemByName(itemName) || {};
+    const group = it.type === 'Armor' ? 'armor' : 'weapons';
+    const haveId = new Set(SALES.map((x) => x.id));
+    const haveKey = new Set(SALES.map(saleKey));
+    let added = 0;
+    for (let p = 1; p <= maxPages; p++) {
+      const wait = swLast + 1500 - Date.now();
+      if (wait > 0) await sleep(wait);
+      swLast = Date.now();
+      const j = await httpJson(SWERVE + '?group=' + group + '&limit=50&q=' + encodeURIComponent(itemName) + (p > 1 ? '&page=' + p : ''));
+      const raw = Array.isArray(j && j.rows) ? j.rows : [];
+      const rows = raw.filter((r) => norm(r.item_name) === norm(itemName)).map(normSwerve).filter(Boolean);
+      const fresh = rows.filter((r) => !haveId.has(r.id) && !haveKey.has(saleKey(r)));
+      if (fresh.length) {
+        await dbPut('sales', fresh);
+        fresh.forEach((r) => { SALES.push(r); haveId.add(r.id); haveKey.add(saleKey(r)); });
+        added += fresh.length;
+      }
+      status(`Swervelord ${itemName}: page ${p}, ${added} new sales`);
+      if (raw.length < 50) break;
+    }
+    SW_ERR = '';
     return added;
   }
 
@@ -1156,6 +1219,7 @@
           <label>Resale fee %<input id="s-rfee" type="number" step="0.5" value="${S.resaleFee}"></label>
           <label>Profit wanted %<input id="s-margin" type="number" step="1" value="${S.flipMargin}"></label>
           <label class="chk"><input type="checkbox" id="s-gnm" ${S.greenNeedsMargin ? 'checked' : ''}> Green only when price meets profit wanted</label>
+          <label class="chk"><input type="checkbox" id="s-sw" ${S.useSwerve ? 'checked' : ''}> Also use Swervelord sale history</label>
           <label>Resale price<select id="s-basis"><option value="p50" ${S.resaleBasis !== 'p25' ? 'selected' : ''}>Median sale</option><option value="p25" ${S.resaleBasis === 'p25' ? 'selected' : ''}>Lower quarter (cautious)</option></select></label>
           <button class="b2" id="s-bunkref">Refresh cache prices</button></div>
         <div class="hint" id="s-bunkinfo"></div>
@@ -1166,7 +1230,7 @@
       const k = $('#s-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { status('Key should be 16 letters and numbers.'); return; }
       S.key = k; S.armour = +$('#s-arm').value || 0; S.critChance = +$('#s-cc').value || 0; S.critMult = +$('#s-cm').value || 1;
-      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.greenNeedsMargin = $('#s-gnm').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0); S.resaleFee = Math.max(0, +$('#s-rfee').value || 0); S.flipMargin = Math.max(0, +$('#s-margin').value || 0); S.resaleBasis = $('#s-basis').value;
+      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.greenNeedsMargin = $('#s-gnm').checked; S.useSwerve = $('#s-sw').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0); S.resaleFee = Math.max(0, +$('#s-rfee').value || 0); S.flipMargin = Math.max(0, +$('#s-margin').value || 0); S.resaleBasis = $('#s-basis').value;
       save(); status('Saved.');
     };
     const bunkInfo = () => {
@@ -1369,6 +1433,7 @@
         if (!ITEMS.length) await loadItems();
         const it = d.itemId ? { id: d.itemId } : itemByName(d.name);
         if (it) await fetchItemHistory(it.id, 5);
+        try { await fetchSwerveHistory(d.name, 6); } catch (e) { SW_ERR = e.message || String(e); }
       } catch (err) { btn.textContent = err.message; return; }
       ahScan(true);
     };
@@ -1435,6 +1500,11 @@
           added += await fetchItemHistory(x.it.id, x.have ? 2 : 5);
           AH_AUTO[x.it.id] = Date.now();
           AH_ERR = '';
+          try {
+            const swFirst = !AH_AUTO['sw' + x.it.id];
+            added += await fetchSwerveHistory(x.it.name || x.n, swFirst ? 6 : 1);
+            AH_AUTO['sw' + x.it.id] = Date.now();
+          } catch (e) { SW_ERR = e.message || String(e); }
         } catch (e) {
           AH_ERR = e.message || String(e);
           break;
