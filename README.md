@@ -103,6 +103,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 | Version | Date | Change |
 |---|---|---|
+| 1.10.2 | 22 Nov 2026 | Removed the "Capture auction page" troubleshooting button from the Auction House. |
 | 1.10.1 | 22 Nov 2026 | Swervelord requests are sent without cookies, so your Swervelord login is never attached (the archive needs no login). |
 | 1.10.0 | 22 Nov 2026 | Swervelord's sale archive added as a second history source (read-only, no key): 6 pages (300 sales) per item on first sight, then 1 page per hourly top-up, filtered to the exact item and de-duplicated against Torn API sales. Gentle rate (1 call per 1.5 s, only items on screen). Settings tick box "Also use Swervelord sale history". Tampermonkey asks once to allow swervelord.dev. |
 | 1.9.0 | 22 Nov 2026 | Auction page loads history by itself: on first sight of an item it pulls 5 pages of sales, then tops up at most once an hour per item, and the boxes update without clicking. Boxes say "Loading auction history…" while it runs, ask for the Public key if none is set, and show the API error if a fetch fails. |

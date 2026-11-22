@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.10.1
+// @version      1.10.2
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -30,7 +30,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.10.1';
+  const VERSION = '1.10.2';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -1542,24 +1542,6 @@
     });
     obs.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => ahScan(false), 800);
-    // Capture button kept for troubleshooting the page layout.
-    const b = document.createElement('button');
-    b.textContent = 'Capture auction page';
-    b.style.cssText = 'position:fixed;left:8px;bottom:130px;z-index:2147483646;background:#2e6b3a;color:#fff;border:none;border-radius:20px;padding:7px 12px;font:bold 12px Arial,sans-serif;cursor:pointer';
-    b.onclick = () => {
-      const lis = ahListings();
-      const dump = '=== URL ===\n' + location.href + '\n=== LISTINGS: ' + lis.length + ' ===\n\n' +
-        lis.slice(0, 3).map((li, i) => '--- li ' + i + ' ---\n' + li.outerHTML.replace(/<div class="ac-ah[\s\S]*?<\/div>/, '').slice(0, 8000) + '\n\nPARSED: ' + JSON.stringify(ahFromDom(li)) + '\nAPI: ' + JSON.stringify((AH.get(li.id) || {}).data || null)).join('\n\n');
-      const box = document.createElement('div');
-      box.style.cssText = 'position:fixed;inset:10%;z-index:2147483647;background:#14111b;color:#fff;border:1px solid #7b3fe4;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px;font:12px Arial';
-      box.innerHTML = '<b style="color:#fff">Auction page capture: copy all of this and send it to Claude</b>';
-      const ta = document.createElement('textarea'); ta.value = dump; ta.style.cssText = 'flex:1;background:#0f0d15;color:#ddd;font:11px monospace';
-      const row = document.createElement('div');
-      const c = document.createElement('button'); c.textContent = 'Copy'; c.onclick = () => { ta.select(); try { navigator.clipboard.writeText(dump).then(() => (c.textContent = 'Copied'), () => document.execCommand('copy')); } catch (e) { document.execCommand('copy'); } };
-      const x = document.createElement('button'); x.textContent = 'Close'; x.onclick = () => box.remove();
-      row.append(c, ' ', x); box.append(ta, row); document.body.appendChild(box);
-    };
-    document.body.appendChild(b);
   }
 
   // ================= Boot =================
