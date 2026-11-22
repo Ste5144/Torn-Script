@@ -242,6 +242,7 @@ Display only. On any bazaar, each item gets a badge with its resale value and th
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.2.0 | 22 Nov 2026 | Shows each item's city sell price (shop / Pawn Shop, from the Torn API) on the badge, in the hover detail and in Deals; "🏙 above price" when the city pays more than the bazaar price. Counting it as a resale route stays a Settings tick box. |
 | 1.1.2 | 22 Nov 2026 | Panel text readable (was dark grey on dark), green rows for deals that beat your margin, profit in green. NPC shop route now off by default and only used below market value: it showed Xanax selling to the NPC at $825k, which looks wrong. |
 | 1.1.1 | 22 Nov 2026 | Sort toggle on both lists: Profit $ (whole stack, default) or Margin %. |
 | 1.1.0 | 22 Nov 2026 | Deals tab: cheapest bazaar listings across Torn for a watchlist (Weav3r feed), with stack profit and seller links. Stack-profit filter. Tabs for This bazaar / Deals / Settings. Runs on the Item Market too (Deals only). |
