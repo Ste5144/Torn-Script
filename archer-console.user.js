@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.8.0
+// @version      1.8.1
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.8.0';
+  const VERSION = '1.8.1';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -1247,7 +1247,12 @@
     });
     const cls = (li.className || '') + ' ' + Array.from(li.querySelectorAll('[class]')).map((e) => (typeof e.className === 'string' ? e.className : '')).join(' ');
     const rm = cls.match(/\b(?:glow-)?(yellow|orange|red)\b/i);
-    return { name, price: priceM ? +priceM[1] : NaN, dmg: nums[0], acc: nums[1], b, rarity: rm ? rm[1].toLowerCase() : null };
+    const rarity = rm ? rm[1].toLowerCase() : null;
+    // Armour shows one number (armour value), not damage and accuracy.
+    const known = itemByName(name);
+    const isArmour = (known && known.type === 'Armor') || /itemtab=arm/i.test(location.hash) || nums.length === 1;
+    if (isArmour) return { name, type: 'Armor', price: priceM ? +priceM[1] : NaN, dmg: NaN, acc: NaN, arm: nums[0], b, rarity };
+    return { name, price: priceM ? +priceM[1] : NaN, dmg: nums[0], acc: nums[1], b, rarity };
   }
   // Text of each element's own text nodes, in page order, skipping our badge.
   function leafTexts(root) {
