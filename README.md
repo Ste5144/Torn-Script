@@ -103,6 +103,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 | Version | Date | Change |
 |---|---|---|
+| 1.9.0 | 22 Nov 2026 | Auction page loads history by itself: on first sight of an item it pulls 5 pages of sales, then tops up at most once an hour per item, and the boxes update without clicking. Boxes say "Loading auction history…" while it runs, ask for the Public key if none is set, and show the API error if a fetch fails. |
 | 1.8.1 | 22 Nov 2026 | Armour auctions read from the page now use the armour value (not damage), drop the weapon index and get the armour Bunker value (12 BB). Previously this only worked when the API supplied the listing. |
 | 1.8.0 | 22 Nov 2026 | Green (Great/Good) badges now also need the price to meet your profit wanted (default 10%) on resale or Bunker trade-in. Below fair but short of the margin shows amber, labelled "Great/Good vs fair, but under your 10% profit". Settings tick box "Green only when price meets profit wanted" (on by default) switches back to the old grading. |
 | 1.7.0 | 14 Nov 2026 | Auction badges add a profit check: resale value (median or lower-quarter comparable sale, less resale fee) and Bunker Buck trade-in value, profit at the current bid, and the max bid for your wanted margin (default 10%). Auctions currently under either max bid get a gold outline. Settings: resale fee, profit wanted, resale price basis. |

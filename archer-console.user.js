@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.8.1
+// @version      1.9.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.8.1';
+  const VERSION = '1.9.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -1342,7 +1342,15 @@
       ? `<div class="pf">${pLine('Resell', pc.resale, ` (${S.resaleBasis === 'p25' ? 'lower-quarter' : 'median'} sale less ${S.resaleFee}% fee)`)}${pLine('Bunker Bucks', pc.bunker, ` (${fl.bb} BB; caches sold less ${S.marketFee}% fee)${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}`)}${early ? '<div class="m">Bid not final: it is only cheap if it finishes at or under the max bid.</div>' : ''}</div>`
       : (v.n && v.n < (S.minComps || 5) ? `<div class="pf m">Resale: needs ${S.minComps} comparable sales to judge.</div>` : '');
     const hrs = isFinite(left) ? (left >= 3600 ? Math.floor(left / 3600) + 'h ' + Math.floor((left % 3600) / 60) + 'm' : Math.floor(left / 60) + 'm') : '?';
-    if (!v.n) {
+    const keyOk = /^[A-Za-z0-9]{16}$/.test(S.key);
+    if (!v.n && AH_FETCHING.has(norm(d.name))) {
+      box.className = 'ac-ah none';
+      box.innerHTML = `<b>Loading auction history for ${esc(d.name)}…</b> This box updates by itself.${idx}${flTxt}${src}`;
+    } else if (!v.n && !keyOk) {
+      box.innerHTML = `<b>No auction history yet.</b> Add your Public API key in Archer Console Settings (Alt+A) and history will load by itself.${idx}${flTxt}${src}`;
+    } else if (!v.n && AH_ERR) {
+      box.innerHTML = `<b>Could not load history:</b> ${esc(AH_ERR)}${idx}${flTxt}${src} <button data-f="1">Try again</button>`;
+    } else if (!v.n) {
       box.innerHTML = `<b>No auction history cached</b> for ${esc(d.name)} (${bon})${idx}${flTxt}${src} <button data-f="1">Fetch history</button>`;
     } else if (deal.thin) {
       box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
@@ -1393,6 +1401,65 @@
         ahBadge(li, rec.data, dom.price);
       }
     } finally { ahBusy = false; }
+    ahAutoFetch();
+  }
+  // Load history by itself for every item on the page: first visit pulls 5 pages,
+  // then a quick top-up (stops at sales already cached) at most once an hour per item.
+  const AH_FETCHING = new Set();
+  let AH_ERR = '';
+  let ahAutoBusy = false;
+  let AH_AUTO = null;
+  async function ahAutoFetch() {
+    if (ahAutoBusy || !/^[A-Za-z0-9]{16}$/.test(S.key)) return;
+    ahAutoBusy = true;
+    let added = 0;
+    try {
+      if (!AH_AUTO) { try { AH_AUTO = (await kvGet('ahauto')) || {}; } catch (e) { AH_AUTO = {}; } }
+      if (!ITEMS.length) await loadItems();
+      const names = [...new Set(ahListings().map((li) => { const r = AH.get(li.id); return (r && r.data && r.data.name) || ahFromDom(li).name; }).filter(Boolean))];
+      const now = Date.now();
+      const todo = [];
+      names.forEach((n) => {
+        const it = itemByName(n);
+        if (!it) return;
+        const have = SALES.some((x) => x.itemId === it.id);
+        const last = AH_AUTO[it.id] || 0;
+        if (now - last < (have ? 3600e3 : 6 * 3600e3)) return;
+        todo.push({ n, it, have });
+      });
+      if (!todo.length) return;
+      todo.forEach((x) => { if (!x.have) AH_FETCHING.add(norm(x.n)); });
+      if (todo.some((x) => !x.have)) ahRefreshBadges();
+      for (const x of todo) {
+        try {
+          added += await fetchItemHistory(x.it.id, x.have ? 2 : 5);
+          AH_AUTO[x.it.id] = Date.now();
+          AH_ERR = '';
+        } catch (e) {
+          AH_ERR = e.message || String(e);
+          break;
+        } finally {
+          AH_FETCHING.delete(norm(x.n));
+          ahRefreshBadges();
+        }
+      }
+      try { await kvSet('ahauto', AH_AUTO); } catch (e) { /* ignore */ }
+    } catch (e) {
+      AH_ERR = e.message || String(e);
+    } finally {
+      AH_FETCHING.clear();
+      ahAutoBusy = false;
+      ahRefreshBadges();
+    }
+  }
+  // Redraw badges from cached data without new API calls.
+  function ahRefreshBadges() {
+    ahListings().forEach((li) => {
+      const r = AH.get(li.id);
+      if (!r) return;
+      const dom = ahFromDom(li);
+      ahBadge(li, r.data, dom.price);
+    });
   }
   function installAH() {
     if (!/amarket\.php/i.test(location.href) || window.__acAH) return;
