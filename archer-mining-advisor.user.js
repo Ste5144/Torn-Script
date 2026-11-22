@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.2.1
+// @version      2.3.0
 // @description  Display-only company advisor for a Mining Corporation: daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @grant        GM_getValue
@@ -494,8 +494,15 @@ function hungarian(c) {
   // ---- Stock runway (recent logged days first, else the model)
   function runway() {
     const days = Object.keys(snaps).sort().slice(-4).map(d => snaps[d]).filter(s => s && s.sold > 0 && s.made > 0);
+    // Opened every other day: "made" needs yesterday's log, so fall back to the stock change between logged days.
+    const dayMs = d => Date.parse(d + 'T00:00:00Z');
+    const stockDays = Object.keys(snaps).sort().filter(d => snaps[d] && snaps[d].stock != null && dayMs(d) >= Date.now() - 12 * 864e5);
     let net, src;
     if (days.length >= 2) { net = days.reduce((a, s) => a + s.made - s.sold, 0) / days.length; src = `last ${days.length} logged days`; }
+    else if (stockDays.length >= 2) {
+      const a = stockDays[0], z = stockDays[stockDays.length - 1], span = (dayMs(z) - dayMs(a)) / 864e5;
+      net = (snaps[z].stock - snaps[a].stock) / span; src = `stock change ${a} to ${z}`;
+    }
     else { const p = modelParams(), d = Model.day(p, {}); net = d.prod - d.dem; src = 'model estimate'; }
     const stock = data.inStock || 0, cap = +cfg.model.warehouseCap || 0;
     let msg, warn = false;
@@ -597,14 +604,15 @@ function hungarian(c) {
     });
     out.forEach(p => {
       const n = p.days.length, avg = f => { const v = p.days.map(f).filter(x => x != null && !isNaN(x)); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : null; };
-      Object.assign(p, { n, from: p.days[0].day, to: p.days[n - 1].day, sold: avg(d => d.sold), made: avg(d => d.made || null),
+      const span = Math.round((Date.parse(p.days[n - 1].day + 'T00:00:00Z') - Date.parse(p.days[0].day + 'T00:00:00Z')) / 864e5) + 1;
+      Object.assign(p, { n, span, from: p.days[0].day, to: p.days[n - 1].day, sold: avg(d => d.sold), made: avg(d => d.made || null),
         profit: avg(d => d.profit), income: avg(d => d.income), first: p.days[0] });
     });
     return out;
   }
   function verdictOf(prev, cur) {
     if (!prev || !cur || !cur.key) return null;
-    if (cur.n < 3) return { wait: 3 - cur.n };
+    if (cur.span < 3) return { wait: 3 - cur.span };
     const sd = 360, se = sd * Math.sqrt(1 / cur.n + 1 / Math.max(1, prev.n));
     const dSold = cur.sold - prev.sold, dProfit = cur.profit != null && prev.profit != null ? cur.profit - prev.profit : null;
     const call = Math.abs(dSold) < 1.5 * se ? 'too close to call' : dSold > 0 ? 'sales up' : 'sales down';
@@ -619,15 +627,16 @@ function hungarian(c) {
     const mos = data.emps.filter(e => norm(e.position) === 'mill operator' && !isLocked(e));
     const ses = data.emps.filter(e => norm(e.position) === 'sales executive' && !isLocked(e));
     const curEE = e => e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, norm(e.position), b) || 0);
-    if (daysEmpty < 10) {
+    const warnDays = +cfg.warnDays || 14; // opened every other day, so act with a buffer
+    if (daysEmpty < warnDays) {
       if (!me) {
         const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
         return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${c ? esc(c.e.name) : 'your best Mill Operator'} to Mine Engineer</b>${c ? ` (${c.v} EE)` : ''}: worth roughly 1 to 2 Mill Operators of output.` };
       }
       const c = ses.map(e => ({ e, gain: (tot(e, 'mill operator', b) || 0), lose: curEE(e) })).sort((x, y) => x.lose - y.lose)[0];
-      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days. Production is short: <b>${c ? 'move ' + esc(c.e.name) + ' (weakest Sales Executive, ' + c.lose + ' EE) to Mill Operator' : 'add a Mill Operator'}</b>, or hire a stronger Mill Operator to replace your weakest. Recheck in 2 days.` };
+      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days. Production is short: <b>${c ? 'move ' + esc(c.e.name) + ' (weakest Sales Executive, ' + c.lose + ' EE) to Mill Operator' : 'add a Mill Operator'}</b>, or hire a stronger Mill Operator to replace your weakest${isFinite(rw.net) && rw.net < -1 && data.price ? ` (only if their wage is well under about ${m$(-rw.net * data.price)}/day more, the income lost once stock runs out)` : ''}. Recheck in 2 days.` };
     }
-    if (cur && cur.n < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.n} more logged day(s) so the change can be judged.` };
+    if (cur && cur.span < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.span} more day(s) so the change can be judged.` };
     if ((daysEmpty > 25 || daysCap < 20) && se < 6) {
       const c = mos.map(e => ({ e, seEE: tot(e, 'sales executive', b) || 0, moEE: curEE(e) })).filter(x => x.seEE >= 110)
         .sort((x, y) => (y.seEE - y.moEE) - (x.seEE - x.moEE))[0];
@@ -638,7 +647,7 @@ function hungarian(c) {
         return { level: '', text: `Stock ${t(stock)} t with ${isFinite(daysEmpty) ? daysEmpty.toFixed(0) + ' days to empty' : 'no shortage'}${isFinite(daysCap) ? ', ' + daysCap.toFixed(0) + ' days to the cap' : ''}: room to sell more. <b>Move ${esc(c.e.name)} from Mill Operator to Sales Executive</b> (${c.moEE} EE as MO, ${c.seEE} as SE). Model: demand ${sg(after.dem - now.dem)} t/day, about ${d$((after.dem - now.dem) * p.price)}/day while stock lasts; stock then ${net < -1 ? 'falls about ' + t(-net) + ' t/day (' + (stock / -net).toFixed(0) + ' days)' : 'holds'}.` };
       }
     }
-    return { level: '', text: `<b>Hold.</b> Stock ${t(stock)} t, ${rw.net < -1 ? 'falling ' + t(-rw.net) : rw.net > 1 ? 'rising ' + t(rw.net) : 'steady at'} t/day. No change clears the rules (add a Sales Executive when 25+ days of stock; cut one when under 10).` };
+    return { level: '', text: `<b>Hold.</b> Stock ${t(stock)} t, ${rw.net < -1 ? 'falling ' + t(-rw.net) : rw.net > 1 ? 'rising ' + t(rw.net) : 'steady at'} t/day. No change clears the rules (add a Sales Executive when 25+ days of stock; cut one when under 14).` };
   }
   function costCheck() {
     const days = loggedDays().filter(s => s.income != null && s.profit != null);
@@ -663,7 +672,7 @@ function hungarian(c) {
       <h3>Next move</h3><div class="rec ${rec.level}">${rec.text}</div>`;
     if (cur && prev) {
       h += `<h3>Last change</h3>`;
-      if (v && v.wait) h += `<div class="rec">Changed to <b>${esc(cur.key)}</b> on ${esc(cur.from)}. Needs ${v.wait} more logged day(s) before it can be judged.</div>`;
+      if (v && v.wait) h += `<div class="rec">Changed to <b>${esc(cur.key)}</b> on ${esc(cur.from)}. Needs ${v.wait} more day(s) before it can be judged.</div>`;
       else if (v) h += `<div class="rec ${v.call === 'sales down' ? 'w' : ''}"><b>${esc(cur.key)}</b> vs before (<span class="mut">${esc(prev.key)}</span>): sold ${sg(v.dSold)} t/day${v.dProfit != null ? ', profit ' + d$(v.dProfit) + '/day' : ''}. Verdict: <b>${v.call}</b> <span class="mut">(normal day-to-day swing about ±${t(v.se * 1.5)} t)</span>.</div>`;
     }
     if (cc.notes.length || cc.over.length) {
@@ -676,7 +685,7 @@ function hungarian(c) {
       <h3>Fill in history</h3><p class="mut">The briefing logs a day each time you open the panel after the 18:10 TCT update. To fill gaps, copy the <b>Stock records</b> and <b>Company records</b> tables from your company page (select from the Date header to the last row), paste below and press Import. Pasting the same days again just updates them.</p>
       <textarea id="amc-import" rows="5" style="width:100%;background:#141917;color:#e6ebe8;border:1px solid #2f3835;border-radius:4px;font:12px monospace" placeholder="Paste Stock records and/or Company records here"></textarea>
       <p><button class="act" data-act="import">Import</button> <span class="mut" id="amc-import-msg"></span></p>
-      <p class="mut">Rules: add a Sales Executive when stock covers 25+ days or the cap is under 20 days away; move one back when stock runs out within 10 days; otherwise hold, and judge each change after 3 logged days. The advisor suggests; you make the change in Torn.</p>`;
+      <p class="mut">Rules: add a Sales Executive when stock covers 25+ days or the cap is under 20 days away; move one back when stock runs out within 14 days; otherwise hold, and judge each change after 3 logged days. The advisor suggests; you make the change in Torn.</p>`;
     return h;
   }
 
