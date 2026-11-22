@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Scalper (display only)
 // @namespace    sterlingarcher.scalper
-// @version      1.0.0
+// @version      1.0.1
 // @description  Display only. On any bazaar, badges each item with its resale value (lowest item market listing less tax, or Torn market value) and profit at the bazaar price. Green = beats your margin. Public API key only; never buys.
 // @author       SterlingArcher
 // @match        https://www.torn.com/bazaar.php*
@@ -26,7 +26,7 @@
   'use strict';
   if (window.__bzScalper) return;
   window.__bzScalper = true;
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const LS = 'bzScalper.cfg';
   const API = 'https://api.torn.com/v2/';
   const DEF = {
@@ -127,7 +127,7 @@
         if (isFinite(price)) {
           if (seen.has(el)) break;
           seen.add(el);
-          out.push({ el, id: +m[1], price, qty: qtyIn(el) });
+          out.push({ el, id: +m[1], price, qty: qtyIn(el), info: infoBox(el) });
           break;
         }
       }
@@ -143,13 +143,22 @@
     walk(el);
     return t.replace(/\s+/g, ' ');
   }
+  // The text column holding name, price and stock: the badge goes there as one short line.
+  function infoBox(el) {
+    const leaf = Array.from(el.querySelectorAll('*')).find((x) => !x.closest('.bzs-badge') && /^\s*\$\s?[\d,]+/.test(x.textContent || '') && !Array.from(x.children).some((ch) => /\$/.test(ch.textContent || '')));
+    if (!leaf) return el;
+    // Climb to the column that also holds the stock line, so the badge sits under it, not beside the price.
+    let x = leaf.parentElement;
+    while (x && x !== el && !/in stock/i.test(x.textContent || '')) x = x.parentElement;
+    return x && x !== el ? x : leaf.parentElement || el;
+  }
   function priceIn(el) {
     const m = ownText(el).match(/\$\s?([\d,]{1,15})/);
     return m ? +m[1].replace(/,/g, '') : NaN;
   }
   function qtyIn(el) {
     const t = ownText(el);
-    const m = t.match(/\((\d[\d,]*)\)/) || t.match(/\bx\s?(\d[\d,]*)\b/i) || t.match(/(\d[\d,]*)\s+in stock/i);
+    const m = t.match(/(\d[\d,]*)\s+in stock/i) || t.match(/\((\d[\d,]*)\)/) || t.match(/\bx\s?(\d[\d,]*)\b/i);
     return m ? +m[1].replace(/,/g, '') : 1;
   }
 
@@ -172,11 +181,11 @@
 
   // ---------- Badges ----------
   const CSS = `
-    .bzs-badge{display:block;margin:3px 2px 2px;padding:2px 5px;border-radius:4px;font:11px/1.3 Arial,sans-serif;color:#fff !important;background:#2a2a2a;border:1px solid #555;text-align:left;white-space:normal}
+    .bzs-badge{display:inline-block;max-width:100%;margin-top:2px;padding:0 5px;border-radius:3px;font:bold 11px/16px Arial,sans-serif;color:#fff !important;background:#2a2a2a;border:1px solid #555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;vertical-align:top}
     .bzs-badge b{color:#fff !important}
     .bzs-badge.ok{background:#163016;border-color:#3fbf3f}
     .bzs-badge.near{background:#332b14;border-color:#e0b030}
-    .bzs-badge.dear{background:#2a2a2a;border-color:#555;opacity:.8}
+    .bzs-badge.dear{background:#2a2a2a;border-color:#555;opacity:.7;font-weight:normal}
     .bzs-badge .m{color:#cfcfcf !important}
     .bzs-hl{outline:2px solid #3fbf3f !important;outline-offset:-2px}
     #bzs-btn{position:fixed;right:10px;bottom:70px;z-index:2147483646;background:#2e6b3a;color:#fff;border:none;border-radius:18px;padding:6px 11px;font:bold 12px Arial,sans-serif;cursor:pointer}
@@ -189,21 +198,26 @@
     #bzs-panel .m{color:#aaa}
   `;
   function badge(c, it, im) {
-    let b = c.el.querySelector(':scope > .bzs-badge');
-    if (!b) { b = document.createElement('div'); b.className = 'bzs-badge'; c.el.appendChild(b); b.addEventListener('click', (e) => e.stopPropagation()); }
-    if (!it) { b.className = 'bzs-badge dear'; b.innerHTML = '<span class="m">Unknown item</span>'; return null; }
-    if (!it.tradable) { b.className = 'bzs-badge dear'; b.innerHTML = '<span class="m">Not tradable</span>'; return null; }
+    const host = c.info || c.el;
+    let b = host.querySelector(':scope > .bzs-badge');
+    if (!b) { b = document.createElement('div'); b.className = 'bzs-badge'; host.appendChild(b); b.addEventListener('click', (e) => e.stopPropagation()); }
+    if (!it) { b.className = 'bzs-badge dear'; b.textContent = 'Unknown item'; return null; }
+    if (!it.tradable) { b.className = 'bzs-badge dear'; b.textContent = 'Not tradable'; return null; }
     const j = judge(c, it, im);
     c.el.classList.toggle('bzs-hl', j.ok);
     b.className = 'bzs-badge ' + (j.ok ? 'ok' : j.near ? 'near' : 'dear');
     const pending = !im && imPending.has(c.id);
-    const via = S.sellVia === 'market' ? `less ${S.tax}% tax` : 'no tax';
-    const head = j.ok
-      ? `<b>CHEAP: +${money(j.profit)} (${j.pct.toFixed(1)}%)</b>${c.qty > 1 ? ` · ${c.qty} × = <b>${money(j.total)}</b>` : ''}`
-      : j.profit > 0 ? `<b>+${money(j.profit)} (${j.pct.toFixed(1)}%)</b>, under your margin` : `<b>${money(j.profit)}</b> at this price`;
-    const npc = j.src === 'NPC shop' ? ` · <b>sell to NPC shop for ${money(it.sell)}</b>` : '';
-    const ref = im && im.low ? `Lowest ${money(im.low)}${im.second ? ', next ' + money(im.second) : ''}` : `Market value ${money(it.mv)}${pending ? ' · checking listings…' : ''}`;
-    b.innerHTML = `${head}${npc}<br><span class="m">${ref} · resale ${money(j.net)} (${j.src === 'NPC shop' ? 'NPC shop, no tax' : via})</span>`;
+    const via = j.src === 'NPC shop' ? 'NPC shop, no tax' : S.sellVia === 'market' ? `item market less ${S.tax}% tax` : 'own bazaar, no tax';
+    b.textContent = j.profit > 0
+      ? `${j.ok ? '✅ ' : ''}+${money(j.profit)} (${j.pct.toFixed(1)}%)${j.ok && c.qty > 1 ? ' · all ' + money(j.total) : ''}${j.src === 'NPC shop' ? ' NPC' : ''}`
+      : `${money(j.profit)}${pending ? ' …' : ''}`;
+    b.title = [
+      `${it.name}: bazaar ${money(c.price)}${c.qty > 1 ? ' × ' + c.qty : ''}`,
+      im && im.low ? `Lowest item market listing ${money(im.low)}${im.second ? ', next ' + money(im.second) : ''}` : `Market value ${money(it.mv)} (listings ${pending ? 'being checked' : 'not checked: priced above market value'})`,
+      it.sell ? `NPC shop pays ${money(it.sell)}` : '',
+      `Resale ${money(j.net)} via ${via}`,
+      `Profit ${money(j.profit)} each (${isFinite(j.pct) ? j.pct.toFixed(1) : '?'}%)${c.qty > 1 ? ', ' + money(j.total) + ' for all' : ''}`,
+    ].filter(Boolean).join('\n');
     return Object.assign({ id: c.id, name: it.name, price: c.price, qty: c.qty }, j);
   }
 
@@ -216,7 +230,7 @@
     try {
       const cs = cards();
       if (!cs.length) return;
-      if (!keyOk()) { cs.forEach((c) => { let b = c.el.querySelector(':scope > .bzs-badge'); if (!b) { b = document.createElement('div'); b.className = 'bzs-badge dear'; c.el.appendChild(b); } b.innerHTML = '<span class="m">Scalper: add a Public API key (button bottom right)</span>'; }); return; }
+      if (!keyOk()) { cs.forEach((c) => { const host = c.info || c.el; let b = host.querySelector(':scope > .bzs-badge'); if (!b) { b = document.createElement('div'); b.className = 'bzs-badge dear'; host.appendChild(b); } b.textContent = 'Scalper: add API key'; }); return; }
       const items = await loadItems();
       rows = cs.map((c) => badge(c, items[c.id], IM[c.id])).filter(Boolean);
       renderList();
