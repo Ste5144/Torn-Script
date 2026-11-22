@@ -103,6 +103,7 @@ A weapon and auction dashboard (purple **Archer Console** button, bottom left, o
 
 | Version | Date | Change |
 |---|---|---|
+| 1.8.0 | 22 Nov 2026 | Green (Great/Good) badges now also need the price to meet your profit wanted (default 10%) on resale or Bunker trade-in. Below fair but short of the margin shows amber, labelled "Great/Good vs fair, but under your 10% profit". Settings tick box "Green only when price meets profit wanted" (on by default) switches back to the old grading. |
 | 1.7.0 | 14 Nov 2026 | Auction badges add a profit check: resale value (median or lower-quarter comparable sale, less resale fee) and Bunker Buck trade-in value, profit at the current bid, and the max bid for your wanted margin (default 10%). Auctions currently under either max bid get a gold outline. Settings: resale fee, profit wanted, resale price basis. |
 | 1.6.0 | 8 Nov 2026 | Big Al's Bunker trade-in floor: Bunker Bucks per item (type, colour, one or two bonuses) × best cache value per BB from live item market prices after fee. Shown on Auction House badges, Item market, Import live and Ceiling bid; bids or listings under the floor are flagged. Settings: Bunker unlocked, market fee, cache prices. |
 | 1.5.0 | 8 Nov 2026 | Import live keeps a saved list: pastes merge (duplicates replaced), end times become countdowns, ended auctions drop off; current bids seen on the Auction House fill the Bid column so saved rows get a deal grade. |

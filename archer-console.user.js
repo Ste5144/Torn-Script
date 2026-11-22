@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.7.0
+// @version      1.8.0
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.7.0';
+  const VERSION = '1.8.0';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -46,6 +46,7 @@
     marketFee: 5,      // % fee when selling a cache on the item market
     resaleFee: 5,      // % fee assumed when reselling a weapon (item market tax is 5%; auction fee unconfirmed)
     flipMargin: 10,    // % profit wanted on a resale or Bunker trade-in before a bid counts as cheap
+    greenNeedsMargin: true, // green badge only when the price also clears the profit wanted (resale or Bunker)
     resaleBasis: 'p50', // resale price: p50 = median of comparable sales, p25 = lower quarter (cautious)
     myTypes: 'PST, RFL',
   };
@@ -1154,6 +1155,7 @@
           <label>Cache sale fee %<input id="s-fee" type="number" step="0.5" value="${S.marketFee}"></label>
           <label>Resale fee %<input id="s-rfee" type="number" step="0.5" value="${S.resaleFee}"></label>
           <label>Profit wanted %<input id="s-margin" type="number" step="1" value="${S.flipMargin}"></label>
+          <label class="chk"><input type="checkbox" id="s-gnm" ${S.greenNeedsMargin ? 'checked' : ''}> Green only when price meets profit wanted</label>
           <label>Resale price<select id="s-basis"><option value="p50" ${S.resaleBasis !== 'p25' ? 'selected' : ''}>Median sale</option><option value="p25" ${S.resaleBasis === 'p25' ? 'selected' : ''}>Lower quarter (cautious)</option></select></label>
           <button class="b2" id="s-bunkref">Refresh cache prices</button></div>
         <div class="hint" id="s-bunkinfo"></div>
@@ -1164,7 +1166,7 @@
       const k = $('#s-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { status('Key should be 16 letters and numbers.'); return; }
       S.key = k; S.armour = +$('#s-arm').value || 0; S.critChance = +$('#s-cc').value || 0; S.critMult = +$('#s-cm').value || 1;
-      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0); S.resaleFee = Math.max(0, +$('#s-rfee').value || 0); S.flipMargin = Math.max(0, +$('#s-margin').value || 0); S.resaleBasis = $('#s-basis').value;
+      S.days = +$('#s-days').value || 180; S.dmgPerPt = +$('#s-dpp').value || 0; S.minComps = Math.max(1, +$('#s-mc').value || 5); S.gradeWithinMin = Math.max(1, +$('#s-gw').value || 60); S.gapMs = Math.max(650, +$('#s-gap').value || 1000); S.myTypes = $('#s-types').value; S.bunkerUnlocked = $('#s-bunk').checked; S.greenNeedsMargin = $('#s-gnm').checked; S.marketFee = Math.max(0, +$('#s-fee').value || 0); S.resaleFee = Math.max(0, +$('#s-rfee').value || 0); S.flipMargin = Math.max(0, +$('#s-margin').value || 0); S.resaleBasis = $('#s-basis').value;
       save(); status('Saved.');
     };
     const bunkInfo = () => {
@@ -1303,6 +1305,15 @@
     const t = { name: d.name, rarity: d.rarity, b: d.b, dmg: d.dmg, acc: d.acc, arm: d.arm };
     const v = valuate(t);
     let deal = dealOf(price, v);
+    const fl = bunkerFloor(Object.assign({}, d, { rarity: d.rarity }));
+    const pc = profitCheck(price, v, fl);
+    const bunkerOk = pc.bunker && pc.bunker.ok && S.bunkerUnlocked;
+    const meetsMargin = !!((pc.resale && pc.resale.ok) || bunkerOk);
+    let capped = '';
+    if (S.greenNeedsMargin && (deal.k === 'great' || deal.k === 'good') && !meetsMargin) {
+      capped = deal.k;
+      deal = Object.assign({}, deal, { k: 'fair', label: (capped === 'great' ? 'Great' : 'Good') + ' vs fair, but under your ' + fmt(S.flipMargin) + '% profit' });
+    }
     const early = isFinite(left) && left > (S.gradeWithinMin || 60) * 60;
     let tone = '';
     if (early && deal.k) { tone = 'e-' + deal.k; deal = Object.assign({}, deal, { early: true, k: '' }); }
@@ -1313,11 +1324,8 @@
     const src = d.src === 'api' ? '' : ' <span class="m">(stats read from page)</span>';
     const idx = d.type === 'Armor' || (!isFinite(d.dmg) && isFinite(d.arm)) ? '' : ` · Index <b>${fmt(indexOf(d.dmg, d.b), 1)}</b>`;
     const bon = (d.b || []).map((x) => { const n = guideNote(x.t, x.v, d.rarity); return esc(x.t) + ' ' + esc(x.v) + '%' + (n ? ' [' + esc(n) + ']' : ''); }).join(', ') || 'no bonus';
-    const fl = bunkerFloor(Object.assign({}, d, { rarity: d.rarity }));
     const under = fl.bb && isFinite(fl.floor) && isFinite(price) && price < fl.floor;
     const flTxt = fl.bb ? ` · Bunker floor <b>${floorText(fl)}</b>${under ? ' <b>(bid under trade-in value)</b>' : ''}${S.bunkerUnlocked ? '' : ' <span class="m">[Bunker not unlocked]</span>'}` : '';
-    const pc = profitCheck(price, v, fl);
-    const bunkerOk = pc.bunker && pc.bunker.ok && S.bunkerUnlocked;
     li.classList.remove('ac-hl-flip');
     if ((pc.resale && pc.resale.ok) || bunkerOk) li.classList.add('ac-hl-flip');
     const pLine = (label, r, extra) => {
@@ -1334,7 +1342,7 @@
     } else if (deal.thin) {
       box.innerHTML = `<b>Not enough history</b>: only ${v.n} comparable sale${v.n === 1 ? '' : 's'} (need ${S.minComps}). Nearest sold for ${money(v.p50)}${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Fetch more history</button>`;
     } else if (deal.early) {
-      const band = { great: 'still in great-buy range', good: 'still below fair', fair: 'above fair, below ceiling', over: 'already over ceiling' }[tone.slice(2)] || '';
+      const band = capped ? 'below fair, but not yet under your ' + fmt(S.flipMargin) + '% profit max bid' : { great: 'still in great-buy range', good: 'still below fair', fair: 'above fair, below ceiling', over: 'already over ceiling' }[tone.slice(2)] || '';
       box.innerHTML = `<b>Ends in ${hrs}: bid not final, ${band}.</b> Current ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · bid up to <b>${money(v.p50)}</b> for fair value, <b>${money(v.p25)}</b> or less is a great buy, ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
     } else {
       box.innerHTML = `<b>${esc(deal.label)}</b> at ${money(price)} (${deal.pct > 0 ? '+' : ''}${fmt(deal.pct)}% vs fair) · Great ≤ <b>${money(v.p25)}</b> · Fair <b>${money(v.p50)}</b> · Ceiling <b>${money(v.p75)}</b> · ${v.n} comps${idx}${flTxt} <span class="m">(${bon})</span>${src} <button data-f="1">Refresh</button>`;
