@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Scalper (display only)
 // @namespace    sterlingarcher.scalper
-// @version      1.1.0
+// @version      1.1.1
 // @description  Display only. On any bazaar, badges each item with its resale value (lowest item market listing less tax, or Torn market value) and profit at the bazaar price. Green = beats your margin. Public API key only; never buys.
 // @author       SterlingArcher
 // @match        https://www.torn.com/bazaar.php*
@@ -31,7 +31,7 @@
   'use strict';
   if (window.__bzScalper) return;
   window.__bzScalper = true;
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const LS = 'bzScalper.cfg';
   const API = 'https://api.torn.com/v2/';
   const DEF = {
@@ -41,6 +41,7 @@
     sellVia: 'market', // market = item market (5% tax), bazaar = your bazaar (no tax, slower)
     tax: 5,
     undercut: 1,       // $ below the lowest listing you would list at
+    sortBy: 'total',   // total = whole-stack profit; pct = margin %
     minStack: 50000,   // hide deals whose whole-stack profit is under this
     watch: ['Xanax', 'Feathery Hotel Coupon', 'Can of Red Cow', 'Can of Munster', 'Can of Rockstar Rudolph', 'Can of Goose Juice',
       'Can of Damp Valley', 'Can of Crocozade', 'Can of Santa Shooters', 'Can of Taurine Elite', 'Six-Pack of Energy Drink',
@@ -325,12 +326,21 @@
       dealMsg = e.message || String(e);
     } finally { dealBusy = false; renderDeals(); }
   }
+  function sortBar() {
+    const b = (k, l) => `<button data-sort="${k}" style="padding:1px 7px;font-size:11px;${S.sortBy === k ? '' : 'background:#333'}">${l}</button>`;
+    return `<div style="margin:4px 0" class="m">Sort by ${b('total', 'Profit $')}${b('pct', 'Margin %')}</div>`;
+  }
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest && e.target.closest('#bzs-panel button[data-sort]');
+    if (!t) return;
+    S.sortBy = t.dataset.sort; save(); renderList(); renderDeals();
+  });
   const ago = (sec) => (!isFinite(sec) ? '?' : sec < 90 ? Math.round(sec) + 's' : sec < 5400 ? Math.round(sec / 60) + 'm' : Math.round(sec / 3600) + 'h');
   function renderDeals() {
     const box = document.getElementById('bzs-deals');
     if (!box) return;
-    const rows = DEALS.filter((d) => d.total >= (S.minStack || 0)).sort((a, b) => (b.ok - a.ok) || (b.total - a.total)).slice(0, 40);
-    box.innerHTML = `<div class="m">${esc(dealMsg)}</div>`
+    const rows = DEALS.filter((d) => d.total >= (S.minStack || 0)).sort((a, b) => (b.ok - a.ok) || (S.sortBy === 'pct' ? b.pct - a.pct : b.total - a.total)).slice(0, 40);
+    box.innerHTML = sortBar() + `<div class="m">${esc(dealMsg)}</div>`
       + (rows.length ? `<table><tr class="m"><td>Item / seller</td><td class="num">Price × qty</td><td class="num">Profit</td></tr>${rows.map((d) => `<tr>
         <td>${d.ok ? '✅ ' : ''}<b>${esc(d.name)}</b><br><a href="https://www.torn.com/bazaar.php?userId=${d.pid}" target="_blank" rel="noopener" style="color:#7fb8ff">${esc(d.seller)}</a> <span class="m">seen ${ago(d.age)} ago</span></td>
         <td class="num">${money(d.price)}<br><span class="m">× ${d.qty.toLocaleString('en-US')}</span></td>
@@ -342,8 +352,8 @@
   function renderList() {
     const box = document.getElementById('bzs-list');
     if (!box) return;
-    const best = rows.filter((r) => r.profit > 0 && r.total >= (S.minStack || 0)).sort((a, b) => b.total - a.total).slice(0, 15);
-    box.innerHTML = (apiErr ? `<div style="color:#ff9a9a">${esc(apiErr)}</div>` : '')
+    const best = rows.filter((r) => r.profit > 0 && r.total >= (S.minStack || 0)).sort((a, b) => S.sortBy === 'pct' ? b.pct - a.pct : b.total - a.total).slice(0, 15);
+    box.innerHTML = sortBar() + (apiErr ? `<div style="color:#ff9a9a">${esc(apiErr)}</div>` : '')
       + (best.length ? `<table><tr class="m"><td>Item</td><td class="num">Price</td><td class="num">Profit</td></tr>${best.map((r) => `<tr><td>${r.ok ? '✅ ' : ''}${esc(r.name)}${r.qty > 1 ? ' ×' + r.qty : ''}</td><td class="num">${money(r.price)}</td><td class="num">${money(r.profit)}<br><span class="m">${r.pct.toFixed(1)}%</span></td></tr>`).join('')}</table>`
         : `<div class="m">No items on this page make ${money(S.minStack)} or more for the whole stack.</div>`);
   }

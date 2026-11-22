@@ -242,6 +242,7 @@ Display only. On any bazaar, each item gets a badge with its resale value and th
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.1.1 | 22 Nov 2026 | Sort toggle on both lists: Profit $ (whole stack, default) or Margin %. |
 | 1.1.0 | 22 Nov 2026 | Deals tab: cheapest bazaar listings across Torn for a watchlist (Weav3r feed), with stack profit and seller links. Stack-profit filter. Tabs for This bazaar / Deals / Settings. Runs on the Item Market too (Deals only). |
 | 1.0.1 | 22 Nov 2026 | Badge is now one short line under the stock count (was a narrow column overlapping the next item); full detail on hover. Stock count read from "(N in stock)". |
 | 1.0.0 | 22 Nov 2026 | First version. |
