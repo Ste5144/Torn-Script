@@ -14,7 +14,7 @@ Tampermonkey userscripts for Torn City (torn.com). All scripts are display-only:
 | High-Low Helper | Casino High-Low (`page.php?sid=highlow`) | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-highlow-helper.user.js) |
 | Quick Mail | Any Torn page with player names | None | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-quick-mail.user.js) |
 | War Board | Faction pages (`factions.php`) | Public (+ FFScouter key) | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/archer-war-board.user.js) |
-| Bazaar Scalper | Any player's bazaar (`bazaar.php`) | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-bazaar-scalper.user.js) |
+| Bazaar Scalper | Any player's bazaar (`bazaar.php`); Deals tab also on the Item Market | Public | [Install](https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-bazaar-scalper.user.js) |
 
 ## Installing
 
@@ -234,11 +234,14 @@ Display only. On any bazaar, each item gets a badge with its resale value and th
 - **Resale value:** lowest item market listing less $1, less the 5% item market tax (or no tax if you choose "My bazaar"). If no listing has been checked, Torn's market value is used. If the NPC shop pays more, the NPC price is used (instant, no tax).
 - **Badge:** one line under the stock count (hover for detail). **Green:** profit at least your minimum $ and % (default $100k and 5%). Amber: some profit, under your margin. Grey: no profit.
 - **Scalper button** (bottom right): API key, margin settings, sell route, and a list of the most profitable items on the page.
+- **Deals tab:** for your watchlist (Settings), the cheapest bazaar listings across Torn from Weav3r's crowd-sourced feed (weav3r.dev, no key), with profit per item and for the whole stack, how long ago the listing was seen, and a link to the seller's bazaar. You open and buy yourself; the badge on the bazaar is the live check. One call per item every 1.5 s, only when you press Scan.
+- **Stack filter:** hide anything whose whole-stack profit is under a set amount (default $50k).
 - **API use:** one call per hour for all item values; listings are checked only for items priced under market value, 1 call per 0.8 s, cached 10 minutes. Torn caches item market listings for up to an hour, so check the live item market before a big buy.
 
 ### Versions
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.1.0 | 22 Nov 2026 | Deals tab: cheapest bazaar listings across Torn for a watchlist (Weav3r feed), with stack profit and seller links. Stack-profit filter. Tabs for This bazaar / Deals / Settings. Runs on the Item Market too (Deals only). |
 | 1.0.1 | 22 Nov 2026 | Badge is now one short line under the stock count (was a narrow column overlapping the next item); full detail on hover. Stock count read from "(N in stock)". |
 | 1.0.0 | 22 Nov 2026 | First version. |

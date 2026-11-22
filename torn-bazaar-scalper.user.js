@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Torn Bazaar Scalper (display only)
 // @namespace    sterlingarcher.scalper
-// @version      1.0.1
+// @version      1.1.0
 // @description  Display only. On any bazaar, badges each item with its resale value (lowest item market listing less tax, or Torn market value) and profit at the bazaar price. Green = beats your margin. Public API key only; never buys.
 // @author       SterlingArcher
 // @match        https://www.torn.com/bazaar.php*
-// @grant        none
+// @match        https://www.torn.com/page.php?sid=ItemMarket*
+// @grant        GM_xmlhttpRequest
+// @connect      weav3r.dev
 // @run-at       document-idle
 // @homepageURL  https://github.com/Ste5144/Torn-Script
 // @updateURL    https://raw.githubusercontent.com/Ste5144/Torn-Script/main/torn-bazaar-scalper.user.js
@@ -19,14 +21,17 @@
     market/{id}/itemmarket (lowest listings; Torn caches this globally for up to 1 hour).
   - The item market lookup is made only for items already priced under market value (candidates),
     1 call per 0.8 s, cached 10 min, so a large bazaar does not hit the 100 calls/min limit.
-  - Works in Tampermonkey/Violentmonkey and Torn PDA (no GM_ functions).
+  - Deals tab: cheapest bazaar listings across Torn from Weav3r's crowd-sourced feed
+    (weav3r.dev/api/marketplace/<id>, read-only, no key), 1 call per 1.5 s, only when you press Scan.
+    It lists sellers with links; you open and buy yourself.
+  - Works in Tampermonkey/Violentmonkey and Torn PDA (GM_xmlhttpRequest when present, else fetch).
 */
 
 (function () {
   'use strict';
   if (window.__bzScalper) return;
   window.__bzScalper = true;
-  const VERSION = '1.0.1';
+  const VERSION = '1.1.0';
   const LS = 'bzScalper.cfg';
   const API = 'https://api.torn.com/v2/';
   const DEF = {
@@ -36,6 +41,11 @@
     sellVia: 'market', // market = item market (5% tax), bazaar = your bazaar (no tax, slower)
     tax: 5,
     undercut: 1,       // $ below the lowest listing you would list at
+    minStack: 50000,   // hide deals whose whole-stack profit is under this
+    watch: ['Xanax', 'Feathery Hotel Coupon', 'Can of Red Cow', 'Can of Munster', 'Can of Rockstar Rudolph', 'Can of Goose Juice',
+      'Can of Damp Valley', 'Can of Crocozade', 'Can of Santa Shooters', 'Can of Taurine Elite', 'Six-Pack of Energy Drink',
+      'Erotic DVD', 'Drug Pack', 'Box of Grenades', 'Lottery Voucher', 'Business Class Ticket', 'Casino Pass',
+      'Ecstasy', 'Vicodin', 'Box of Medical Supplies'].join('\n'),
   };
   let S = load();
   function load() { try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem(LS) || '{}')); } catch (e) { return Object.assign({}, DEF); } }
@@ -225,7 +235,7 @@
   let busy = false;
   let rows = [];
   async function scan() {
-    if (busy) return;
+    if (busy || !/bazaar\.php/.test(location.href)) return;
     busy = true;
     try {
       const cs = cards();
@@ -248,37 +258,140 @@
     } finally { busy = false; }
   }
 
+  // ---------- Deals across all bazaars (Weav3r feed) ----------
+  const W3B = 'https://weav3r.dev/api/marketplace/';
+  let w3Last = 0;
+  function getJson(url) {
+    if (typeof GM_xmlhttpRequest === 'function') {
+      return new Promise((resolve, reject) => GM_xmlhttpRequest({
+        method: 'GET', url, timeout: 15000, anonymous: true,
+        onload: (r) => { try { if (r.status !== 200) throw new Error('Weav3r HTTP ' + r.status); resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+        onerror: () => reject(new Error('Weav3r unreachable')), ontimeout: () => reject(new Error('Weav3r timed out')),
+      }));
+    }
+    return fetch(url, { credentials: 'omit' }).then((r) => { if (!r.ok) throw new Error('Weav3r HTTP ' + r.status); return r.json(); });
+  }
+  async function w3(id) {
+    const wait = w3Last + 1500 - Date.now();
+    if (wait > 0) await sleep(wait);
+    w3Last = Date.now();
+    return getJson(W3B + id + '?limit=20');
+  }
+  let DEALS = [];
+  let dealMsg = '';
+  let dealBusy = false;
+  async function scanDeals() {
+    if (dealBusy) return;
+    dealBusy = true;
+    DEALS = [];
+    try {
+      const items = await loadItems();
+      const byName = {};
+      Object.entries(items).forEach(([id, it]) => { byName[it.name.toLowerCase()] = +id; });
+      const names = String(S.watch || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+      const missing = names.filter((n) => !byName[n.toLowerCase()]);
+      let i = 0;
+      for (const n of names) {
+        const id = byName[n.toLowerCase()];
+        if (!id) continue;
+        i++;
+        dealMsg = `Checking ${n} (${i} of ${names.length - missing.length})…`;
+        renderDeals();
+        const it = items[id];
+        let feed;
+        try { feed = await w3(id); } catch (e) { dealMsg = e.message; renderDeals(); continue; }
+        let im = IM[id];
+        try { im = await lowest(id); } catch (e) { apiErr = e.message; }
+        const L = ((feed && feed.listings) || []).filter((x) => x.player_id && x.price > 0).sort((a, b) => a.price - b.price);
+        const nextBz = (k) => (L[k + 1] ? L[k + 1].price : Infinity);
+        L.slice(0, 8).forEach((x, k) => {
+          const taxM = 1 - (S.tax || 0) / 100;
+          const viaMarket = im && im.low > 0 ? (im.low - (S.undercut || 0)) * taxM : (it.mv || feed.market_price || 0) * taxM;
+          const viaBazaar = Math.min(im && im.low > 0 ? im.low : Infinity, nextBz(k)) - (S.undercut || 0);
+          let net = S.sellVia === 'bazaar' && isFinite(viaBazaar) ? viaBazaar : viaMarket;
+          let src = S.sellVia === 'bazaar' && isFinite(viaBazaar) ? 'own bazaar' : 'item market';
+          if (it.sell > net) { net = it.sell; src = 'NPC shop'; }
+          const each = net - x.price;
+          if (each <= 0) return;
+          const qty = +x.quantity || 1;
+          const pct = each / x.price * 100;
+          DEALS.push({ id, name: it.name, seller: x.player_name || ('#' + x.player_id), pid: x.player_id, qty, price: x.price, net, src, each, pct, total: each * qty,
+            ok: each >= S.minProfit && pct >= S.minPct, age: x.last_checked ? Date.now() / 1000 - x.last_checked : NaN });
+        });
+        renderDeals();
+      }
+      dealMsg = `Scanned ${i} items${missing.length ? ` · not found: ${missing.join(', ')}` : ''} · ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      dealMsg = e.message || String(e);
+    } finally { dealBusy = false; renderDeals(); }
+  }
+  const ago = (sec) => (!isFinite(sec) ? '?' : sec < 90 ? Math.round(sec) + 's' : sec < 5400 ? Math.round(sec / 60) + 'm' : Math.round(sec / 3600) + 'h');
+  function renderDeals() {
+    const box = document.getElementById('bzs-deals');
+    if (!box) return;
+    const rows = DEALS.filter((d) => d.total >= (S.minStack || 0)).sort((a, b) => (b.ok - a.ok) || (b.total - a.total)).slice(0, 40);
+    box.innerHTML = `<div class="m">${esc(dealMsg)}</div>`
+      + (rows.length ? `<table><tr class="m"><td>Item / seller</td><td class="num">Price × qty</td><td class="num">Profit</td></tr>${rows.map((d) => `<tr>
+        <td>${d.ok ? '✅ ' : ''}<b>${esc(d.name)}</b><br><a href="https://www.torn.com/bazaar.php?userId=${d.pid}" target="_blank" rel="noopener" style="color:#7fb8ff">${esc(d.seller)}</a> <span class="m">seen ${ago(d.age)} ago</span></td>
+        <td class="num">${money(d.price)}<br><span class="m">× ${d.qty.toLocaleString('en-US')}</span></td>
+        <td class="num"><b>${money(d.total)}</b><br><span class="m">${money(d.each)} each · ${d.pct.toFixed(1)}%</span><br><span class="m">sell ${money(d.net)} ${esc(d.src)}</span></td></tr>`).join('')}</table>`
+        : (dealBusy ? '' : `<div class="m" style="margin-top:6px">No bazaar deals above your stack minimum (${money(S.minStack)}).</div>`));
+  }
+
   // ---------- Panel ----------
   function renderList() {
     const box = document.getElementById('bzs-list');
     if (!box) return;
-    const best = rows.filter((r) => r.profit > 0).sort((a, b) => b.total - a.total).slice(0, 15);
+    const best = rows.filter((r) => r.profit > 0 && r.total >= (S.minStack || 0)).sort((a, b) => b.total - a.total).slice(0, 15);
     box.innerHTML = (apiErr ? `<div style="color:#ff9a9a">${esc(apiErr)}</div>` : '')
       + (best.length ? `<table><tr class="m"><td>Item</td><td class="num">Price</td><td class="num">Profit</td></tr>${best.map((r) => `<tr><td>${r.ok ? '✅ ' : ''}${esc(r.name)}${r.qty > 1 ? ' ×' + r.qty : ''}</td><td class="num">${money(r.price)}</td><td class="num">${money(r.profit)}<br><span class="m">${r.pct.toFixed(1)}%</span></td></tr>`).join('')}</table>`
-        : '<div class="m">No profitable items on this page.</div>');
+        : `<div class="m">No items on this page make ${money(S.minStack)} or more for the whole stack.</div>`);
   }
+  let tab = 'page';
   function panel() {
     let p = document.getElementById('bzs-panel');
     if (p) { p.remove(); return; }
     p = document.createElement('div');
     p.id = 'bzs-panel';
-    p.innerHTML = `<b>Bazaar Scalper ${VERSION}</b> <span class="m">display only</span>
-      <div style="margin-top:6px">Public API key<input id="bzs-key" value="${esc(S.key)}" maxlength="16"></div>
-      Green when profit is at least $<input id="bzs-min" type="number" value="${S.minProfit}">
-      and at least %<input id="bzs-pct" type="number" step="0.5" value="${S.minPct}">
-      Sell via<select id="bzs-via"><option value="market" ${S.sellVia === 'market' ? 'selected' : ''}>Item market (${S.tax}% tax, fast)</option><option value="bazaar" ${S.sellVia === 'bazaar' ? 'selected' : ''}>My bazaar (no tax, slower)</option></select>
-      <button id="bzs-save">Save</button><button id="bzs-re">Recheck prices</button>
-      <div class="m" style="margin-top:6px">Resale = lowest item market listing less $${S.undercut}, then tax. Torn caches listings for up to an hour, so check the item market before buying big.</div>
-      <div id="bzs-list"></div>`;
     document.body.appendChild(p);
-    p.querySelector('#bzs-save').onclick = () => {
+    drawPanel();
+  }
+  function drawPanel() {
+    const p = document.getElementById('bzs-panel');
+    if (!p) return;
+    const t = (k, label) => `<button data-tab="${k}" style="${tab === k ? '' : 'background:#333'}">${label}</button>`;
+    let h = `<b>Bazaar Scalper ${VERSION}</b> <span class="m">display only</span><div style="margin:6px 0">${t('page', 'This bazaar')}${t('deals', 'Deals')}${t('set', 'Settings')}</div>`;
+    if (tab === 'page') {
+      h += /bazaar\.php/.test(location.href) ? '<div id="bzs-list"></div>' : '<div class="m">Open a bazaar to badge its items, or use the Deals tab.</div>';
+    } else if (tab === 'deals') {
+      h += `<div class="m">Cheapest bazaar listings for your watchlist, from Weav3r's crowd-sourced feed. Prices can be minutes old: the badge on the bazaar itself is the live check.</div>
+        <button id="bzs-scan">${dealBusy ? 'Scanning…' : 'Scan bazaars'}</button><div id="bzs-deals"></div>`;
+    } else {
+      h += `Public API key<input id="bzs-key" value="${esc(S.key)}" maxlength="16">
+        Green when profit is at least $<input id="bzs-min" type="number" value="${S.minProfit}">
+        and at least %<input id="bzs-pct" type="number" step="0.5" value="${S.minPct}">
+        Hide deals whose whole stack makes under $<input id="bzs-stack" type="number" value="${S.minStack}">
+        Sell via<select id="bzs-via"><option value="market" ${S.sellVia === 'market' ? 'selected' : ''}>Item market (${S.tax}% tax, fast)</option><option value="bazaar" ${S.sellVia === 'bazaar' ? 'selected' : ''}>My bazaar (no tax, slower)</option></select>
+        Watchlist for Deals (one item name per line)<textarea id="bzs-watch" rows="7" style="width:100%;box-sizing:border-box;background:#0f0d15;color:#eee;border:1px solid #555;border-radius:4px">${esc(S.watch)}</textarea>
+        <button id="bzs-save">Save</button><button id="bzs-re">Recheck prices</button>
+        <div class="m" style="margin-top:6px">Resale = lowest item market listing less $${S.undercut}, then tax (or the NPC shop if it pays more). Torn caches listings for up to an hour, so check the item market before buying big.</div>
+        <div id="bzs-list"></div>`;
+    }
+    p.innerHTML = h;
+    p.querySelectorAll('button[data-tab]').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; drawPanel(); }; });
+    const sv = p.querySelector('#bzs-save');
+    if (sv) sv.onclick = () => {
       const k = p.querySelector('#bzs-key').value.trim();
       if (k && !/^[A-Za-z0-9]{16}$/.test(k)) { alertBox('Key should be 16 letters and numbers.'); return; }
-      S.key = k; S.minProfit = Math.max(0, +p.querySelector('#bzs-min').value || 0); S.minPct = Math.max(0, +p.querySelector('#bzs-pct').value || 0); S.sellVia = p.querySelector('#bzs-via').value;
-      save(); scan();
+      S.key = k; S.minProfit = Math.max(0, +p.querySelector('#bzs-min').value || 0); S.minPct = Math.max(0, +p.querySelector('#bzs-pct').value || 0);
+      S.minStack = Math.max(0, +p.querySelector('#bzs-stack').value || 0); S.sellVia = p.querySelector('#bzs-via').value; S.watch = p.querySelector('#bzs-watch').value;
+      save(); alertBox('Saved.'); scan();
     };
-    p.querySelector('#bzs-re').onclick = () => { Object.keys(IM).forEach((k) => delete IM[k]); ITEMS = null; try { localStorage.removeItem('bzScalper.items'); localStorage.removeItem('bzScalper.im'); } catch (e) { /* ignore */ } scan(); };
-    renderList();
+    const re = p.querySelector('#bzs-re');
+    if (re) re.onclick = () => { Object.keys(IM).forEach((k) => delete IM[k]); ITEMS = null; try { localStorage.removeItem('bzScalper.items'); localStorage.removeItem('bzScalper.im'); } catch (e) { /* ignore */ } scan(); };
+    const sc = p.querySelector('#bzs-scan');
+    if (sc) sc.onclick = () => { if (!keyOk()) { dealMsg = 'Add your Public API key in Settings first.'; renderDeals(); return; } sc.textContent = 'Scanning…'; scanDeals().then(() => { const b2 = document.getElementById('bzs-scan'); if (b2) b2.textContent = 'Scan bazaars'; }); };
+    renderList(); renderDeals();
   }
   function alertBox(t) { const l = document.getElementById('bzs-list'); if (l) l.innerHTML = `<div style="color:#ff9a9a">${esc(t)}</div>`; }
 
