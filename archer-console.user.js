@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Console (Torn weapon and auction dashboard)
 // @namespace    sterlingarcher.torn
-// @version      1.11.0
+// @version      1.11.1
 // @description  Display only. Auction history with ceiling bids, item market finder, weapon ranking index, mod price reference. Public API key only.
 // @author       SterlingArcher
 // @match        https://www.torn.com/*
@@ -30,7 +30,7 @@
   if (window.__archerConsole) return;
   window.__archerConsole = true;
 
-  const VERSION = '1.11.0';
+  const VERSION = '1.11.1';
   const LS = 'archer_console_v1';
   const API = 'https://api.torn.com/v2/';
 
@@ -850,7 +850,7 @@
   }
   function renderHistory() {
     const rows = historyFilter();
-    $('#h-count').textContent = `${fmt(SALES.length)} sales cached`;
+    $('#h-count').textContent = `${fmt(SALES.length)} sales cached` + (rows.length > 2000 ? ` · table shows the newest 2,000 of ${fmt(rows.length)} matches` : '');
     const prices = rows.map((r) => r.price).sort((a, b) => a - b);
     const med = prices.length ? prices[Math.floor(prices.length / 2)] : NaN;
     const avg = prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : NaN;
@@ -874,7 +874,9 @@
       { h: 'Buyer', v: (r) => r.buyer },
       { h: 'Closed', v: (r) => r.ts, def: 1 },
     ];
-    sortable($('#h-tbl'), rows.slice(0, 2000), cols, 'hist', (r) => `<tr>
+    // Newest first before capping: the cache loads oldest first, so a plain cut showed only old sales.
+    const shown = rows.slice().sort((a, b) => b.ts - a.ts).slice(0, 2000);
+    sortable($('#h-tbl'), shown, cols, 'hist', (r) => `<tr>
       <td>${esc(r.name)}</td><td>${rarityCell(r.rarity)}</td><td class="num">${fmt(r.q, 1)}</td><td class="num">${fmt(r.dmg, 2)}</td>
       <td class="num">${fmt(r.acc, 2)}</td><td class="num">${fmt(r.arm, 2)}</td><td>${bonusCell(r.b, r.rarity)}</td><td class="num">${fmt(indexOf(r.dmg, r.b), 1)}</td>
       <td class="num">${fmt(r.bids)}</td><td class="num"><b>${money(r.price)}</b></td><td>${esc(r.buyer)}</td><td class="muted">${ago(r.ts)}</td></tr>`);
