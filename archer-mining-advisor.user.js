@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.5.3
+// @version      2.5.4
 // @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -331,6 +331,9 @@ function hungarian(c) {
       wages: wagesNow, profit: d.income != null ? d.income - wagesNow - d.ads * 1e6 : undefined, src: 'api' });
     // Pasted Torn records are authoritative for that day's results; keep them.
     const prevSnap = (get('snaps', {}) || {})[day];
+    // The day's setup is what ran at 18:10 TCT: keep the first one logged, so a role change made later that day
+    // isn't credited with the old setup's results.
+    if (prevSnap && prevSnap.se != null) ['se', 'sec', 'mo', 'me', 'emp'].forEach(k => { if (prevSnap[k] != null) snaps[day][k] = prevSnap[k]; });
     if (prevSnap && /paste/.test(prevSnap.src || '')) {
       ['sold', 'made', 'stock', 'income', 'profit', 'wages'].forEach(k => { if (prevSnap[k] != null) snaps[day][k] = prevSnap[k]; });
       snaps[day].src = 'api+paste';
@@ -591,7 +594,7 @@ function hungarian(c) {
     if (net < -1) { const n = stock / -net; msg = `Stock ${t(stock)} t, falling about ${t(-net)} t/day: runs out in about <b>${n.toFixed(1)} days</b>.`; warn = n < 7; }
     else if (net > 1 && cap) { const n = Math.max(0, cap - stock) / net; msg = `Stock ${t(stock)} t, rising about ${t(net)} t/day: hits the ${t(cap)} t cap in about <b>${n.toFixed(1)} days</b>.`; warn = n < 7; }
     else msg = `Stock ${t(stock)} t, roughly steady.`;
-    return { net, msg: msg + ` <span class="mut">(${src})</span>`, warn };
+    return { net, msg: msg + ` <span class="mut">(${src})</span>`, warn, fromModel: src === 'model estimate' };
   }
   function runwayBanner() { const r = runway(); return `<div class="rec ${r.warn ? 'w' : ''}">${r.msg}</div>`; }
 
@@ -724,6 +727,13 @@ function hungarian(c) {
       return { move: c ? `Move ${esc(c.e.name)} (weakest Sales Executive, ${c.lose} EE) to Mill Operator` : 'Add a Mill Operator',
         why: `, or hire a stronger Mill Operator to replace your weakest${isFinite(rw.net) && rw.net < -1 && data.price ? ` (only if their wage is well under about ${m$(-rw.net * data.price)}/day more, the income lost once stock runs out)` : ''}. Recheck in 2 days.` };
     };
+    // A role change made since the last daily run hasn't produced any results yet.
+    const lastDay = loggedDays().slice(-1)[0];
+    const liveChanged = lastDay && lastDay.se != null && (lastDay.se !== se || lastDay.me !== me || lastDay.mo !== mos.length + data.emps.filter(e => norm(e.position) === 'mill operator' && isLocked(e)).length);
+    if (liveChanged) {
+      const was = `${lastDay.se} SE, ${lastDay.mo} MO, ${lastDay.me ? 'ME' : 'no ME'}`, now = `${se} SE, ${cnt('mill operator')} MO, ${me ? 'ME' : 'no ME'}`;
+      return { level: '', text: `You changed the setup since the last daily run (${was} → ${now}). The next run at 18:10 TCT is the first one with the new setup. <b>Hold</b> for 3 days so the change can be judged; no other moves until then.` };
+    }
     // A real change needs an earlier setup to compare with; the first logged day on a device is not a change.
     const changedRecently = cur && per.length >= 2 && cur.span < 2;
     if (daysEmpty < warnDays && changedRecently && daysEmpty >= 5) {
@@ -735,6 +745,8 @@ function hungarian(c) {
       return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days${!me ? ' and the Mine Engineer is empty' : ''}. <b>${f.move}</b> ${f.why}` };
     }
     if (cur && per.length >= 2 && cur.span < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.span} more day(s) so the change can be judged.` };
+    // Adding a seller drains stock, so only do it on real logged results, never on the model's guess alone.
+    if (rw.fromModel || per.length < 2 && (!cur || cur.n < 3)) return { level: '', text: `<b>Hold.</b> Not enough logged days yet to judge stock (${cur ? cur.n : 0} so far). Open this again after the next daily run, or import the Stock and Company records (bottom of this tab) to judge straight away.` };
     if ((daysEmpty > 25 || daysCap < 20) && se < 6) {
       const c = mos.map(e => ({ e, seEE: tot(e, 'sales executive', b) || 0, moEE: curEE(e) })).filter(x => x.seEE >= 110)
         .sort((x, y) => (y.seEE - y.moEE) - (x.seEE - x.moEE))[0];
