@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.5.1
+// @version      2.5.2
 // @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -715,6 +715,10 @@ function hungarian(c) {
     }
     if (daysEmpty < warnDays) {
       if (!me) {
+        // With 5+ Sales Executives, fill the Mine Engineer from the weakest seller: the role uses the same stats (intelligence, endurance),
+        // keeps every Mill Operator in place and brings sales and production close to balance in one move.
+        const seC = se >= 5 ? ses.map(e => ({ e, seEE: curEE(e), est: tot(e, 'sales executive', b) || 0, v: tot(e, 'mine engineer', b) || 0 })).filter(x => x.v >= 120 || x.v >= x.est - 5).sort((x, y) => x.seEE - y.seEE)[0] : null;
+        if (seC) return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${esc(seC.e.name)} from Sales Executive to Mine Engineer</b> (${seC.seEE} EE as SE; Mine Engineer uses the same stats, so about the same there). That keeps all your Mill Operators and brings sales and production close to balance.` };
         const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
         return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${c ? esc(c.e.name) : 'your best Mill Operator'} to Mine Engineer</b>${c ? ` (${c.v} EE)` : ''}: worth roughly 1 to 2 Mill Operators of output.` };
       }
