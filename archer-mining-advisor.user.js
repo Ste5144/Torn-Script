@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.5.0
+// @version      2.5.1
 // @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -760,10 +760,12 @@ function hungarian(c) {
       <div class="tile">Trains waiting<b>${data.trains == null ? '?' : t(trains)}</b><span class="mut">${trains >= 15 ? '<span class="wrn">use some today (max 20)</span>' : 'see the Trains tab'}</span></div></div>
       <h3>1. What to do today</h3><div class="rec ${rec.level}" style="font-size:14px">${rec.text}</div>
       <h3>2. Problems to fix</h3>${bad.length ? bad.map(c => `<div class="rec w">⚠ ${c.text}</div>`).join('') : '<div class="rec">✔ All house rules met. Nothing to fix.</div>'}
-      <h3>3. Report to ${esc(cfg.owner || 'the owner')}</h3>
-      <p><button class="act" data-act="summary">Copy summary for ${esc(cfg.owner || 'the owner')}</button> <span class="mut" id="amc-sum-msg">Then paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</span></p>
+      ${reportDue()
+        ? `<h3>3. Weekly report to ${esc(cfg.owner || 'the owner')} (due)</h3><div class="rec w">Copy the weekly summary and paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</div>
+           <p><button class="act" data-act="summary">Copy weekly summary</button> <span class="mut" id="amc-sum-msg"></span></p>`
+        : `<p class="mut" style="margin-top:10px">Weekly report to ${esc(cfg.owner || 'the owner')}: next due ${nextReportText()}. <button class="act" data-act="summary">Copy now</button> <span id="amc-sum-msg"></span></p>`}
       <textarea id="amc-sum" rows="1" readonly style="position:absolute;left:-9999px"></textarea>
-      ${trains >= 15 ? `<h3>4. Trains</h3><div class="rec w">${t(trains)} company trains waiting. Open the <b>Trains</b> tab and give them to the people listed; trains over 20 are lost.</div>` : ''}
+      ${trains >= 15 ? `<h3>Trains</h3><div class="rec w">${t(trains)} company trains waiting. Open the <b>Trains</b> tab and give them to the people listed; trains over 20 are lost.</div>` : ''}
       <details style="margin-top:14px"><summary class="mut" style="cursor:pointer">Fill in history (first day only)</summary>
       <p class="mut">Copy the <b>Stock records</b> and <b>Company records</b> tables from the company page (from the Date header to the last row), paste below and press Import. This lets the advisor judge changes from day one.</p>
       <textarea id="amc-import" rows="4" style="width:100%;background:#141917;color:#e6ebe8;border:1px solid #2f3835;border-radius:4px;font:12px monospace" placeholder="Paste Stock records and/or Company records here"></textarea>
@@ -781,7 +783,7 @@ function hungarian(c) {
       <div class="tile">Profit last day<b>${last && last.profit != null ? m$(last.profit) : '?'}</b><span class="mut">income ${last && last.income != null ? m$(last.income) : '?'}</span></div></div>
       <h3>Next move</h3><div class="rec ${rec.level}">${rec.text}</div>
       <h3>House rule checks</h3>${houseChecks().map(c => `<div class="rec ${c.ok ? '' : 'w'}">${c.ok ? '✔ ' : '⚠ '}${c.text}</div>`).join('')}
-      <p><button class="act" data-act="summary">Copy summary for ${esc(cfg.owner || 'the owner')}</button> <span class="mut" id="amc-sum-msg">Paste it into a Torn mail to ${esc(cfg.owner || 'the owner')} each day or two.</span></p>
+      <p><button class="act" data-act="summary">Copy summary for ${esc(cfg.owner || 'the owner')}</button> <span class="mut" id="amc-sum-msg">Weekly: paste it into a Torn mail to ${esc(cfg.owner || 'the owner')} each Sunday.</span></p>
       <textarea id="amc-sum" rows="1" readonly style="position:absolute;left:-9999px"></textarea>`;
     if (cur && prev) {
       h += `<h3>Last change</h3>`;
@@ -881,17 +883,38 @@ function hungarian(c) {
     else out.push({ ok: true, text: '<span class="mut">TCP/TGP boosts could not be read with this key (needs a Limited key).</span>' });
     return out;
   }
+  // Weekly owner report: due on Sunday (TCT) or once 7+ days have passed since the last copy.
+  function reportDue() {
+    const lastAt = +get('lastReport', 0) || 0;
+    if (!lastAt) return new Date().getUTCDay() === 0;
+    if (Date.now() - lastAt >= 7 * 864e5 - 6 * 36e5) return true;
+    return new Date().getUTCDay() === 0 && new Date(lastAt).toISOString().slice(0, 10) !== new Date().toISOString().slice(0, 10) && Date.now() - lastAt > 2 * 864e5;
+  }
+  function nextReportText() {
+    const d = new Date(); d.setUTCDate(d.getUTCDate() + ((7 - d.getUTCDay()) % 7 || 7));
+    return 'Sunday ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
   function summaryText() {
     const per = periods(), rw = runway(), rec = recommend(per, rw), last = loggedDays().slice(-1)[0], cur = per[per.length - 1], prev = per[per.length - 2], v = verdictOf(prev, cur);
     const plain = h => String(h).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
     const stock = data.inStock || 0;
     const runTxt = rw.net < -1 ? `falling ${t(-rw.net)} t/day, about ${(stock / -rw.net).toFixed(0)} days left` : rw.net > 1 ? `rising ${t(rw.net)} t/day` : 'steady';
     const issues = houseChecks().filter(c => !c.ok).map(c => '- ' + plain(c.text));
+    const wk = loggedDays().filter(d => Date.parse(d.day + 'T00:00:00Z') >= Date.now() - 7.5 * 864e5);
+    const avg = f => { const v = wk.map(f).filter(x => x != null && !isNaN(x)); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : null; };
+    const wkSetups = [...new Set(wk.map(d => setupKey(d)).filter(Boolean))];
+    const stockStart = wk.length ? wk[0].stock : null;
+    const weekLines = wk.length >= 2 ? [
+      `This week (${wk.length} logged days, ${wk[0].day} to ${wk[wk.length - 1].day}): avg sold ${t(avg(d => d.sold))} t, avg made ${avg(d => d.made) ? t(avg(d => d.made)) : '?'} t${avg(d => d.income) != null ? ', avg income ' + m$(avg(d => d.income)) : ''}${avg(d => d.profit) != null ? ', avg profit ' + m$(avg(d => d.profit)) : ''}.`,
+      stockStart != null ? `Stock ${t(stockStart)} t at the start of the week, ${t(stock)} t now.` : '',
+      wkSetups.length > 1 ? `Setups used this week: ${wkSetups.join(' | ')}` : ''
+    ] : [];
     return [
-      `${data.name || 'Company'} report, ${last ? last.day : 'today'}`,
+      `${data.name || 'Company'} weekly report, ${last ? last.day : 'today'}`,
+      ...weekLines,
       cur && cur.key ? `Setup: ${cur.key}` : '',
-      last ? `Sold ${t(last.sold)} t, made ${last.made ? t(last.made) : '?'} t. Stock ${t(stock)} t (${runTxt}).` : `Stock ${t(stock)} t (${runTxt}).`,
-      last && last.income != null ? `Income ${m$(last.income)}, profit ${last.profit != null ? m$(last.profit) : '?'}. Customers ${last.customers ?? '?'}.` : '',
+      last ? `Latest day: sold ${t(last.sold)} t, made ${last.made ? t(last.made) : '?'} t. Stock ${t(stock)} t (${runTxt}).` : `Stock ${t(stock)} t (${runTxt}).`,
+      last && last.income != null ? `Latest day income ${m$(last.income)}, profit ${last.profit != null ? m$(last.profit) : '?'}. Customers ${last.customers ?? '?'}.` : '',
       `Bank ${data.funds != null ? m$(data.funds) : '?'}. Popularity ${data.popularity ?? '?'}%, environment ${data.environment ?? '?'}%.`,
       v && !v.wait ? `Last change (${cur.from}): sold ${sg(v.dSold)} t/day${v.dProfit != null ? ', profit ' + d$(v.dProfit) + '/day' : ''}: ${v.call}.` : '',
       `Advisor says: ${plain(rec.text)}`,
@@ -912,7 +935,7 @@ function hungarian(c) {
         <li>After the daily update at 18:10 TCT (2:10 am in Perth), open the company page and click <b>AMC advisor</b>. Every other day is fine too.</li>
         <li><b>Today → What to do today</b>: do what it says, or nothing if it says Hold. Make one change at a time; it judges each change after a few days.</li>
         <li><b>Problems to fix</b>: fix anything marked ⚠.</li>
-        <li>Press <b>Copy summary for ${esc(cfg.owner || 'the owner')}</b> and paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</li>
+        <li>Once a week (Sunday, or when the Today tab says it's due), press <b>Copy weekly summary</b> and paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</li>
         <li>Use any company trains (Trains tab) before they reach 20; trains over 20 are wasted.</li>
       </ol>
       <h3>House rules</h3><ul>
@@ -942,7 +965,7 @@ function hungarian(c) {
         <li>Torn Quick Mail (same GitHub) adds a ✉ next to player names and fills in the recruitment mail.</li>
       </ul>
       <h3>What each tab does</h3><ul>
-        <li><b>Today</b> (simple mode): what to do, problems to fix, the report for ${esc(cfg.owner || 'the owner')}, and trains. This is all you need day to day.</li>
+        <li><b>Today</b> (simple mode): what to do, problems to fix, the weekly report for ${esc(cfg.owner || 'the owner')}, and trains. This is all you need day to day.</li>
         <li><b>Trains</b>: who gains most from each company train.</li>
         <li><b>Guide</b> and <b>Settings</b>: this page, your key and the house rules.</li>
       </ul><p class="mut">Advanced tools (Settings → Show advanced tools):</p><ul>
@@ -1025,6 +1048,7 @@ function hungarian(c) {
     else if (b.dataset.act === 'watch') { if (cfg.watchId) { data = null; loadWatch(); } else { lastErr = 'Enter the company ID to watch first.'; render(); } }
     else if (b.dataset.act === 'summary') {
       const txt = summaryText(), ta = box.querySelector('#amc-sum'), msg = box.querySelector('#amc-sum-msg');
+      try { GM_setValue('lastReport', JSON.stringify(Date.now())); } catch (e2) { /* ignore */ }
       const done = ok => { if (msg) msg.textContent = ok ? 'Copied. Paste it into a Torn mail.' : 'Copy blocked by the browser: select the text below and copy it.'; if (!ok && ta) { ta.style.cssText = 'width:100%;height:9em;background:#141917;color:#e6ebe8;border:1px solid #2f3835'; ta.value = txt; ta.select(); } };
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); else done(false);
     }
