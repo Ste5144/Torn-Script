@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.4.1
-// @description  Display-only company advisor for a Mining Corporation: built-in guide for a new director, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
+// @version      2.5.0
+// @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
 // @grant        GM_getValue
@@ -142,7 +142,7 @@ function hungarian(c) {
   const set = (k, v) => GM_setValue(k, JSON.stringify(v));
   const DEF = {
     key: '', bonus: 0, weights: {}, locks: {},
-    house: { price: 8625, ads: 10, minIncome: 80, bankDays: 7 }, fixedWages: 'scorp=0', owner: 'SterlingArcher', watchId: '', lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
+    house: { price: 8625, ads: 10, minIncome: 80, bankDays: 7 }, advanced: false, fixedWages: 'scorp=0', owner: 'SterlingArcher', watchId: '', lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
     model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 40000,
              refEE: 115, meLoss: 1600, refSE: 518, seElast: 0.25 },
     seedLog: [
@@ -373,8 +373,11 @@ function hungarian(c) {
 
   function render() {
     const tabs = data
-      ? [['brief', 'Briefing'], ['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['guide', 'Guide'], ['settings', 'Settings']]
+      ? (cfg.advanced
+        ? [['brief', 'Briefing'], ['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['guide', 'Guide'], ['settings', 'Settings']]
+        : [['brief', 'Today'], ['trains', 'Trains'], ['guide', 'Guide'], ['settings', 'Settings']])
       : [...(obs ? [['watch', 'Owner watch']] : []), ['guide', 'Guide'], ['settings', 'Settings']];
+    if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
     let h = `<header><h2>Archer Mining Co advisor</h2>${tabs.map(([k, l]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}
       <button class="act" data-act="refresh">Refresh</button><span class="mut" id="amc-status">${esc(status)}</span></header><div class="body">`;
     if (lastErr) h += `<div class="rec w">${esc(lastErr)}</div>`;
@@ -743,7 +746,32 @@ function hungarian(c) {
     const over = data.emps.map(e => ({ e, f: mult * Math.max(e.man, e.int, e.end), w: e.wage })).filter(x => x.f > 0 && x.w - x.f >= 250000).sort((x, y) => (y.w - y.f) - (x.w - x.f));
     return { notes: out, over, mult };
   }
-  function viewBrief() {
+  function viewBrief() { return cfg.advanced ? viewBriefFull() : viewToday(); }
+  // Simple mode: one instruction, problems only, the owner summary, trains.
+  function viewToday() {
+    const per = periods(), rw = runway(), rec = recommend(per, rw);
+    const stock = data.inStock || 0, last = loggedDays().slice(-1)[0];
+    const bad = houseChecks().filter(c => !c.ok);
+    const trains = +data.trains || 0;
+    const runTxt = rw.net < -1 ? `about <b>${(stock / -rw.net).toFixed(0)} days</b> left` : rw.net > 1 ? 'rising' : 'steady';
+    let h = `<div class="tiles">
+      <div class="tile">Stock<b>${t(stock)} t</b><span class="mut">${runTxt}</span></div>
+      <div class="tile">Yesterday<b>${last && last.income != null ? m$(last.income) : '?'}</b><span class="mut">income${last && last.profit != null ? ', profit ' + m$(last.profit) : ''}</span></div>
+      <div class="tile">Trains waiting<b>${data.trains == null ? '?' : t(trains)}</b><span class="mut">${trains >= 15 ? '<span class="wrn">use some today (max 20)</span>' : 'see the Trains tab'}</span></div></div>
+      <h3>1. What to do today</h3><div class="rec ${rec.level}" style="font-size:14px">${rec.text}</div>
+      <h3>2. Problems to fix</h3>${bad.length ? bad.map(c => `<div class="rec w">⚠ ${c.text}</div>`).join('') : '<div class="rec">✔ All house rules met. Nothing to fix.</div>'}
+      <h3>3. Report to ${esc(cfg.owner || 'the owner')}</h3>
+      <p><button class="act" data-act="summary">Copy summary for ${esc(cfg.owner || 'the owner')}</button> <span class="mut" id="amc-sum-msg">Then paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</span></p>
+      <textarea id="amc-sum" rows="1" readonly style="position:absolute;left:-9999px"></textarea>
+      ${trains >= 15 ? `<h3>4. Trains</h3><div class="rec w">${t(trains)} company trains waiting. Open the <b>Trains</b> tab and give them to the people listed; trains over 20 are lost.</div>` : ''}
+      <details style="margin-top:14px"><summary class="mut" style="cursor:pointer">Fill in history (first day only)</summary>
+      <p class="mut">Copy the <b>Stock records</b> and <b>Company records</b> tables from the company page (from the Date header to the last row), paste below and press Import. This lets the advisor judge changes from day one.</p>
+      <textarea id="amc-import" rows="4" style="width:100%;background:#141917;color:#e6ebe8;border:1px solid #2f3835;border-radius:4px;font:12px monospace" placeholder="Paste Stock records and/or Company records here"></textarea>
+      <p><button class="act" data-act="import">Import</button> <span class="mut" id="amc-import-msg"></span></p></details>
+      <p class="mut" style="margin-top:12px">Open this once a day (or every other day) after 18:10 TCT. Make one change at a time; the advisor waits a few days to judge each one. More tools: Settings → Show advanced tools.</p>`;
+    return h;
+  }
+  function viewBriefFull() {
     const per = periods(), rw = runway(), cc = costCheck();
     const cur = per[per.length - 1], prev = per[per.length - 2], v = verdictOf(prev, cur), rec = recommend(per, rw);
     const last = loggedDays().slice(-1)[0];
@@ -825,7 +853,14 @@ function hungarian(c) {
     else out.push({ ok: true, text: `Price $${t(data.price)} (house price).` });
     if (Math.abs(data.ads - hr.ads) > 0.01) out.push({ ok: false, text: `Ad budget is $${data.ads}m; house budget is $${hr.ads}m. More than this was measured to lose money; less loses sales.` });
     else out.push({ ok: true, text: `Ads $${data.ads}m a day (house budget).` });
-    if (!cnt('mine engineer')) out.push({ ok: false, text: `No Mine Engineer. It costs up to ${t(cfg.model.meLoss)} t a day of production; fill it when stock is running down.` });
+    if (!cnt('mine engineer')) {
+      // Leaving the Mine Engineer empty is part of the normal cycle while stock is healthy; it is only a problem when stock is running out.
+      let daysLeft = Infinity; try { const rw = runway(); if (rw.net < -1) daysLeft = (data.inStock || 0) / -rw.net; } catch (e) { /* ignore */ }
+      const warnDays = +cfg.warnDays || 14;
+      out.push(daysLeft < warnDays
+        ? { ok: false, text: `No Mine Engineer, and stock runs out in about ${daysLeft.toFixed(0)} days. An empty Mine Engineer costs up to ${t(cfg.model.meLoss)} t a day; follow "What to do today".` }
+        : { ok: true, text: `Mine Engineer empty on purpose: stock is healthy, so that slot is selling instead.` });
+    }
     if (data.capacity && data.emps.length < data.capacity) out.push({ ok: false, text: `${data.emps.length} of ${data.capacity} staff. Hire to fill the empty slot${data.capacity - data.emps.length > 1 ? 's' : ''}.` });
     const wagesDay = data.emps.reduce((a, e) => a + e.wage, 0), costs = wagesDay + data.ads * 1e6, floor = costs * (+hr.bankDays || 7);
     if (data.funds != null) out.push(data.funds < floor
@@ -871,12 +906,12 @@ function hungarian(c) {
       <h3>Setting up (once)</h3><ol>
         <li>On Torn: Settings → API Keys → create a key with <b>Limited</b> access. Never use a Full access key in any script.</li>
         <li>Paste it in this panel's <b>Settings</b> tab and press Save key.</li>
-        <li>In the Briefing tab, paste the company's <b>Stock records</b> and <b>Company records</b> tables (from the company page) into "Fill in history" and press Import, so the advisor can compare setups straight away.</li>
+        <li>On the <b>Today</b> tab, open "Fill in history", paste the company's <b>Stock records</b> and <b>Company records</b> tables (from the company page) and press Import, so the advisor can judge changes straight away.</li>
       </ol>
       <h3>Daily routine (about 2 minutes)</h3><ol>
         <li>After the daily update at 18:10 TCT (2:10 am in Perth), open the company page and click <b>AMC advisor</b>. Every other day is fine too.</li>
-        <li><b>Briefing → Next move</b>: do what it says, or nothing if it says Hold. Make one change at a time; it judges each change after 3 days.</li>
-        <li><b>House rule checks</b>: fix anything marked ⚠.</li>
+        <li><b>Today → What to do today</b>: do what it says, or nothing if it says Hold. Make one change at a time; it judges each change after a few days.</li>
+        <li><b>Problems to fix</b>: fix anything marked ⚠.</li>
         <li>Press <b>Copy summary for ${esc(cfg.owner || 'the owner')}</b> and paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</li>
         <li>Use any company trains (Trains tab) before they reach 20; trains over 20 are wasted.</li>
       </ol>
@@ -907,6 +942,10 @@ function hungarian(c) {
         <li>Torn Quick Mail (same GitHub) adds a ✉ next to player names and fills in the recruitment mail.</li>
       </ul>
       <h3>What each tab does</h3><ul>
+        <li><b>Today</b> (simple mode): what to do, problems to fix, the report for ${esc(cfg.owner || 'the owner')}, and trains. This is all you need day to day.</li>
+        <li><b>Trains</b>: who gains most from each company train.</li>
+        <li><b>Guide</b> and <b>Settings</b>: this page, your key and the house rules.</li>
+      </ul><p class="mut">Advanced tools (Settings → Show advanced tools):</p><ul>
         <li><b>Briefing</b>: next move, house rule checks, last change verdict, results by setup, owner summary, history import.</li>
         <li><b>Allocation</b>: who fits which role best. Only acts on gains above the minimum.</li>
         <li><b>Role mix</b>: how many Sales Executives vs Mill Operators earns most, and how long stock lasts.</li>
@@ -949,7 +988,9 @@ function hungarian(c) {
   function viewSettings() {
     const m = cfg.model;
     const fld = (k, l) => `<label>${l}<input type="number" step="any" data-m="${k}" value="${m[k]}"></label>`;
-    return `<h3>API key</h3><p class="mut">Use a <b>Limited</b> access key (Settings, API Keys on Torn), never Full access. It is stored only in Tampermonkey on this browser and sent only to api.torn.com when you press Refresh or open the panel.</p>
+    return `<h3>View</h3><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" data-adv="1" ${cfg.advanced ? 'checked' : ''}>Show advanced tools (full Briefing, Allocation, Role mix, Staff health, Setup)</label>
+      <p class="mut">Off = simple mode: one instruction a day, problems only, the owner report and trains.</p>
+      <h3>API key</h3><p class="mut">Use a <b>Limited</b> access key (Settings, API Keys on Torn), never Full access. It is stored only in Tampermonkey on this browser and sent only to api.torn.com when you press Refresh or open the panel.</p>
       <label>Limited API key<input type="password" id="amc-key" value="${esc(cfg.key)}" style="width:220px"></label> <button class="act" data-act="savekey">Save key</button>
       <h3>House rules</h3><p class="mut">The Briefing checks these every day and the Guide explains them.</p>
       <label>House price $<input type="number" step="1" data-house="price" value="${cfg.house.price}"></label>
@@ -1006,6 +1047,7 @@ function hungarian(c) {
     else if (el.dataset.m) { cfg.model[el.dataset.m] = parseFloat(el.value) || 0; saveCfg(); }
     else if (el.dataset.cfg) { cfg[el.dataset.cfg] = parseFloat(el.value) || 0; saveCfg(); }
     else if (el.dataset.cfgs) { cfg[el.dataset.cfgs] = el.value.trim(); saveCfg(); }
+    else if (el.dataset.adv) { cfg.advanced = el.checked; saveCfg(); render(); }
     else if (el.dataset.house) { cfg.house[el.dataset.house] = parseFloat(el.value) || 0; saveCfg(); }
     else if (el.id === 'amc-fitprice') { cfg.fitPrice = el.checked; saveCfg(); }
   });
