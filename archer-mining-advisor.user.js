@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.4.0
+// @version      2.4.1
 // @description  Display-only company advisor for a Mining Corporation: built-in guide for a new director, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -707,6 +707,9 @@ function hungarian(c) {
     const ses = data.emps.filter(e => norm(e.position) === 'sales executive' && !isLocked(e));
     const curEE = e => e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, norm(e.position), b) || 0);
     const warnDays = +cfg.warnDays || 14; // opened every other day, so act with a buffer
+    if (daysEmpty < warnDays && cur && cur.span < 2 && daysEmpty >= 5) {
+      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days, but the setup changed on ${cur.from}. <b>Hold</b> and recheck in ${2 - cur.span} day(s): the runway still reflects the old setup. Act sooner only if stock drops under 5 days.` };
+    }
     if (daysEmpty < warnDays) {
       if (!me) {
         const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
@@ -888,6 +891,14 @@ function hungarian(c) {
         <li>Keep at least <b>${hr.bankDays} days</b> of wages + ads in the company bank. Only withdraw above that (the Briefing shows the amount).</li>
         <li>The director should hold full <b>TCP</b> (sales boost) and <b>TGP</b> (advertising boost) blocks. The Briefing checks this.</li>
         <li>Site Manager (Manager special) and Safety Inspector (Cleaner special) are locked: don't move them.</li>
+      </ul>
+      <h3>Why the setup goes back and forth</h3><ul>
+        <li>The mine can sell more salt than it can make. So it runs in a cycle, and the Briefing tells you which step you're on:</li>
+        <li><b>Plenty of stock (25+ days):</b> move a Mill Operator to <b>Sales Executive</b> to sell more (up to 6). Stock then starts falling.</li>
+        <li><b>Stock under about 14 days and no Mine Engineer:</b> move your best Mill Operator to <b>Mine Engineer</b>. That's worth one to two Mill Operators of output.</li>
+        <li><b>Still under 14 days with a Mine Engineer:</b> move the weakest <b>Sales Executive back to Mill Operator</b>.</li>
+        <li>Between those points: <b>Hold</b>. After any change, wait for the Briefing to judge it (2 to 3 days) before the next one, unless stock is under 5 days.</li>
+        <li>Never let stock reach zero: from then on you can only sell what you make each day.</li>
       </ul>
       <h3>Hiring</h3><ul>
         <li>Mill Operator: high <b>manual labour</b> and endurance. Sales Executive: high <b>intelligence</b> and endurance. Secretary: endurance then intelligence.</li>
