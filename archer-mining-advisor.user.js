@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.5.2
+// @version      2.5.3
 // @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -710,22 +710,31 @@ function hungarian(c) {
     const ses = data.emps.filter(e => norm(e.position) === 'sales executive' && !isLocked(e));
     const curEE = e => e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, norm(e.position), b) || 0);
     const warnDays = +cfg.warnDays || 14; // opened every other day, so act with a buffer
-    if (daysEmpty < warnDays && cur && cur.span < 2 && daysEmpty >= 5) {
-      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days, but the setup changed on ${cur.from}. <b>Hold</b> and recheck in ${2 - cur.span} day(s): the runway still reflects the old setup. Act sooner only if stock drops under 5 days.` };
+    // The production fix, worked out once so a "hold" can still name who moves next.
+    const fixShort = () => {
+      if (!me) {
+        // With 5+ Sales Executives, fill the Mine Engineer from the weakest seller: same stats (intelligence, endurance),
+        // keeps every Mill Operator and brings sales and production close to balance in one move.
+        const seC = se >= 5 ? ses.map(e => ({ e, seEE: curEE(e), est: tot(e, 'sales executive', b) || 0, v: tot(e, 'mine engineer', b) || 0 })).filter(x => x.v >= 120 || x.v >= x.est - 5).sort((x, y) => x.seEE - y.seEE)[0] : null;
+        if (seC) return { move: `Move ${esc(seC.e.name)} from Sales Executive to Mine Engineer`, why: `(${seC.seEE} EE as SE; Mine Engineer uses the same stats, so about the same there). That keeps all your Mill Operators and brings sales and production close to balance.` };
+        const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
+        return { move: `Move ${c ? esc(c.e.name) : 'your best Mill Operator'} to Mine Engineer`, why: `${c ? `(${c.v} EE)` : ''}: worth roughly 1 to 2 Mill Operators of output.` };
+      }
+      const c = ses.map(e => ({ e, lose: curEE(e) })).sort((x, y) => x.lose - y.lose)[0];
+      return { move: c ? `Move ${esc(c.e.name)} (weakest Sales Executive, ${c.lose} EE) to Mill Operator` : 'Add a Mill Operator',
+        why: `, or hire a stronger Mill Operator to replace your weakest${isFinite(rw.net) && rw.net < -1 && data.price ? ` (only if their wage is well under about ${m$(-rw.net * data.price)}/day more, the income lost once stock runs out)` : ''}. Recheck in 2 days.` };
+    };
+    // A real change needs an earlier setup to compare with; the first logged day on a device is not a change.
+    const changedRecently = cur && per.length >= 2 && cur.span < 2;
+    if (daysEmpty < warnDays && changedRecently && daysEmpty >= 5) {
+      const f = fixShort();
+      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days, but the setup changed on ${cur.from}. <b>Hold</b> and recheck in ${2 - cur.span} day(s): the runway still reflects the old setup. Act sooner only if stock drops under 5 days.<br>If it's still under ${warnDays} days then: <b>${f.move}</b>.` };
     }
     if (daysEmpty < warnDays) {
-      if (!me) {
-        // With 5+ Sales Executives, fill the Mine Engineer from the weakest seller: the role uses the same stats (intelligence, endurance),
-        // keeps every Mill Operator in place and brings sales and production close to balance in one move.
-        const seC = se >= 5 ? ses.map(e => ({ e, seEE: curEE(e), est: tot(e, 'sales executive', b) || 0, v: tot(e, 'mine engineer', b) || 0 })).filter(x => x.v >= 120 || x.v >= x.est - 5).sort((x, y) => x.seEE - y.seEE)[0] : null;
-        if (seC) return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${esc(seC.e.name)} from Sales Executive to Mine Engineer</b> (${seC.seEE} EE as SE; Mine Engineer uses the same stats, so about the same there). That keeps all your Mill Operators and brings sales and production close to balance.` };
-        const c = mos.map(e => ({ e, v: tot(e, 'mine engineer', b) || 0 })).sort((x, y) => y.v - x.v)[0];
-        return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days and the Mine Engineer is empty. <b>Move ${c ? esc(c.e.name) : 'your best Mill Operator'} to Mine Engineer</b>${c ? ` (${c.v} EE)` : ''}: worth roughly 1 to 2 Mill Operators of output.` };
-      }
-      const c = ses.map(e => ({ e, gain: (tot(e, 'mill operator', b) || 0), lose: curEE(e) })).sort((x, y) => x.lose - y.lose)[0];
-      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days. Production is short: <b>${c ? 'move ' + esc(c.e.name) + ' (weakest Sales Executive, ' + c.lose + ' EE) to Mill Operator' : 'add a Mill Operator'}</b>, or hire a stronger Mill Operator to replace your weakest${isFinite(rw.net) && rw.net < -1 && data.price ? ` (only if their wage is well under about ${m$(-rw.net * data.price)}/day more, the income lost once stock runs out)` : ''}. Recheck in 2 days.` };
+      const f = fixShort();
+      return { level: 'w', text: `Stock runs out in about ${daysEmpty.toFixed(1)} days${!me ? ' and the Mine Engineer is empty' : ''}. <b>${f.move}</b> ${f.why}` };
     }
-    if (cur && cur.span < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.span} more day(s) so the change can be judged.` };
+    if (cur && per.length >= 2 && cur.span < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.span} more day(s) so the change can be judged.` };
     if ((daysEmpty > 25 || daysCap < 20) && se < 6) {
       const c = mos.map(e => ({ e, seEE: tot(e, 'sales executive', b) || 0, moEE: curEE(e) })).filter(x => x.seEE >= 110)
         .sort((x, y) => (y.seEE - y.moEE) - (x.seEE - x.moEE))[0];

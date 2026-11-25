@@ -39,6 +39,7 @@ Make role changes in small steps and check the next day's income before making m
 
 | Version | Date | Change |
 |---|---|---|
+| 2.5.3 | 26 Nov 2026 | A "hold" now still names the planned move (e.g. who goes to Mine Engineer next). The first logged day on a new device or browser is no longer mistaken for a setup change, which had caused a false hold with no name. |
 | 2.5.2 | 26 Nov 2026 | When stock is running out and the Mine Engineer is empty with 5+ Sales Executives, the advice is now to move the **weakest Sales Executive** to Mine Engineer (same stats, keeps every Mill Operator, brings sales and production close to balance in one move) instead of taking a Mill Operator. |
 | 2.5.1 | 25 Nov 2026 | Owner report is now **weekly**: the Today tab shows it as a due step on Sundays (TCT) or 7 days after the last copy, otherwise a one-line "next due" with a Copy now button. The summary adds the week's averages (sold, made, income, profit), stock at the start of the week vs now, and every setup used that week. |
 | 2.5.0 | 25 Nov 2026 | **Simple mode** (default): tabs are Today, Trains, Guide and Settings. Today shows one instruction (what to do today), only the house rules that need fixing, the Copy summary button for the owner, a trains reminder at 15+ trains, and history import tucked away for day one. Settings → Show advanced tools brings back the full Briefing, Allocation, Role mix, Staff health and Setup. An empty Mine Engineer is only flagged as a problem when stock will run out within 14 days (otherwise it's the normal selling phase of the cycle). |
