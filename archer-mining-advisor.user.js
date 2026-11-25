@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.3.0
-// @description  Display-only company advisor for a Mining Corporation: daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
+// @version      2.4.0
+// @description  Display-only company advisor for a Mining Corporation: built-in guide for a new director, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
+// @match        https://www.torn.com/joblist.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      api.torn.com
@@ -140,7 +141,8 @@ function hungarian(c) {
   const get = (k, d) => { try { const v = GM_getValue(k); return v === undefined ? d : JSON.parse(v); } catch (e) { return d; } };
   const set = (k, v) => GM_setValue(k, JSON.stringify(v));
   const DEF = {
-    key: '', bonus: 0, weights: {}, locks: {}, lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
+    key: '', bonus: 0, weights: {}, locks: {},
+    house: { price: 8625, ads: 10, minIncome: 80, bankDays: 7 }, fixedWages: 'scorp=0', owner: 'SterlingArcher', watchId: '', lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
     model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 40000,
              refEE: 115, meLoss: 1600, refSE: 518, seElast: 0.25 },
     seedLog: [
@@ -156,6 +158,7 @@ function hungarian(c) {
   };
   const cfg = Object.assign({}, DEF, get('cfg', {}));
   cfg.model = Object.assign({}, DEF.model, cfg.model || {});
+  cfg.house = Object.assign({}, DEF.house, cfg.house || {});
   if (!cfg.v21) { if (!(+cfg.model.warehouseCap > 0)) cfg.model.warehouseCap = 40000; cfg.v21 = true; set('cfg', cfg); }
   // Sales Executive and Secretary earn the money in a mine; support roles must meet requirements; Mill Operator takes the rest.
   const EARN = ['sales executive', 'secretary'];
@@ -166,6 +169,7 @@ function hungarian(c) {
   const saveCfg = () => set('cfg', cfg);
   let snaps = get('snaps', {});   // reportDay -> { sold, made, price, ads, stock, mo, wages, income, customers }
   let eeHist = get('eeHist', {}); // reportDay -> { name: totalEE }
+  let obsSnaps = get('obsSnaps', {}); // reportDay -> public company figures (owner watch mode)
 
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const t = v => Math.round(+v || 0).toLocaleString('en-AU');
@@ -208,17 +212,81 @@ function hungarian(c) {
   }
 
   // ---------------- API ----------------
-  let data = null, lastErr = '';
+  let data = null, obs = null, lastErr = '';
+  const API = 'https://api.torn.com';
+  async function api(path) {
+    const r = await fetch(`${API}/${path}${path.includes('?') ? '&' : '?'}key=${encodeURIComponent(cfg.key)}&comment=AMCadvisor`);
+    return r.json();
+  }
+  function friendly(err) {
+    const c = err && err.code;
+    if (c === 2) return 'Torn says the API key is wrong. Copy it again from Torn: Settings, API Keys.';
+    if (c === 16) return 'This key\'s access level is too low. Create a Limited access key (not Public).';
+    if (c === 7) return 'This key\'s owner is not the director of a company, so the director view can\'t load.';
+    if (c === 5) return 'Too many API calls in the last minute. Wait a minute and press Refresh.';
+    if (c === 9) return 'The Torn API is temporarily disabled. Try again later.';
+    return `Torn API error ${c}: ${err && err.error}`;
+  }
   async function load() {
-    if (!cfg.key) { lastErr = 'Enter a Limited access API key in Settings.'; render(); return; }
+    if (!cfg.key) { lastErr = ''; tab = 'guide'; render(); return; }
     lastErr = ''; setStatus('Loading…');
     try {
-      const r = await fetch(`https://api.torn.com/company/?selections=profile,detailed,employees,stock&key=${encodeURIComponent(cfg.key)}&comment=AMCadvisor`);
-      const j = await r.json();
-      if (j.error) throw new Error(`Torn API error ${j.error.code}: ${j.error.error}`);
+      const j = await api('company/?selections=profile,detailed,employees,stock');
+      if (j.error) {
+        // Not the director: fall back to the owner's watch mode if a company ID is set.
+        if ((j.error.code === 7 || j.error.code === 16) && cfg.watchId) { data = null; await loadWatch(); return; }
+        throw new Error(friendly(j.error) + (j.error.code === 7 ? ' To watch a company you don\'t run, set its company ID under Settings, Owner watch mode.' : ''));
+      }
       data = parse(j);
+      if (!data.hasStats && cfg.watchId) { data = null; await loadWatch(); return; }
       record(data);
+      data.boosts = await loadBoosts().catch(() => null);
       setStatus(`Updated ${new Date().toLocaleTimeString()}`);
+      if (tab === 'watch') tab = 'brief';
+    } catch (e) { lastErr = e.message; setStatus(''); }
+    render();
+  }
+
+  // The director's own TCP (sales boost) and TGP (advertising boost) blocks. Passive benefits for the company they direct.
+  async function loadBoosts() {
+    let ts = get('tornStocks', null);
+    if (!ts || Date.now() - ts.at > 864e5) {
+      const j = await api('torn/?selections=stocks'); if (j.error) return null;
+      ts = { at: Date.now(), list: Object.values(j.stocks || {}).map(x => ({ id: String(x.stock_id), acr: x.acronym, req: +(x.benefit && x.benefit.requirement) || 0, desc: x.benefit && x.benefit.description, price: +x.current_price || 0 })) };
+      set('tornStocks', ts);
+    }
+    const u = await api('user/?selections=stocks'); if (u.error) return null;
+    const held = u.stocks || {};
+    const out = {};
+    ['TCP', 'TGP'].forEach(acr => {
+      const s = ts.list.find(x => x.acr === acr); if (!s) return;
+      const h = Object.values(held).find(x => String(x.stock_id) === s.id);
+      const shares = h ? +h.total_shares || 0 : 0;
+      const b = h && h.benefit;
+      out[acr] = { shares, req: s.req, full: s.req > 0 && shares >= s.req, desc: s.desc, cost: Math.max(0, s.req - shares) * s.price,
+        ready: b ? (b.ready === 1 || b.ready === true) : null, progress: b && b.progress != null ? `${b.progress}/${b.frequency || '?'}` : '' };
+    });
+    return out;
+  }
+
+  // ---- Owner watch mode: public company figures any key can read.
+  async function loadWatch() {
+    try {
+      const j = await api(`company/${encodeURIComponent(cfg.watchId)}?selections=profile`);
+      if (j.error) throw new Error(friendly(j.error));
+      const c = j.company || {};
+      const emps = Object.entries(c.employees || {}).map(([id, e]) => ({ id, name: e.name, position: e.position, days: e.days_in_company,
+        lastTs: e.last_action ? e.last_action.timestamp : 0, last: e.last_action ? e.last_action.relative : '', status: e.status ? e.status.description || e.status.state || '' : '' }));
+      obs = { name: c.name, director: c.director, rating: c.rating, income: c.daily_income, customers: c.daily_customers, weekly: c.weekly_income,
+        weeklyCustomers: c.weekly_customers, hired: c.employees_hired, capacity: c.employees_capacity, emps, ts: Math.floor(Date.now() / 1000) };
+      const rc = r => emps.filter(e => norm(e.position) === r).length;
+      const day = reportDay(obs.ts);
+      obsSnaps[day] = { income: obs.income, customers: obs.customers, weekly: obs.weekly, staff: emps.length, cap: obs.capacity,
+        se: rc('sales executive'), sec: rc('secretary'), mo: rc('mill operator'), me: rc('mine engineer'), director: obs.director };
+      const keep = Object.keys(obsSnaps).sort().slice(-120); obsSnaps = Object.fromEntries(keep.map(k => [k, obsSnaps[k]]));
+      set('obsSnaps', obsSnaps);
+      tab = 'watch'; lastErr = '';
+      setStatus(`Watch mode, updated ${new Date().toLocaleTimeString()}`);
     } catch (e) { lastErr = e.message; setStatus(''); }
     render();
   }
@@ -236,6 +304,7 @@ function hungarian(c) {
     Object.values(st).forEach(s => { inStock += +s.in_stock || 0; sold += +s.sold_amount || 0; made += +s.created_amount || 0; soldWorth += +s.sold_worth || 0; if (!price) price = +s.price || 0; });
     return {
       ts: j.timestamp || Math.floor(Date.now() / 1000), name: prof.name, income: prof.daily_income, customers: prof.daily_customers, weekly: prof.weekly_income,
+      capacity: +prof.employees_capacity || 0, companyId: prof.ID || prof.id,
       funds: det.company_funds, popularity: det.popularity, efficiency: det.efficiency, environment: det.environment,
       ads: (+det.advertising_budget || 0) / 1e6, trains: det.trains_available, emps, inStock, sold, made, price, soldWorth,
       stockKeys: Object.keys(st), hasStats: emps.some(e => e.man || e.int || e.end)
@@ -298,17 +367,21 @@ function hungarian(c) {
   const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
   const btn = document.createElement('button'); btn.id = 'amc-btn'; btn.textContent = 'AMC advisor'; document.body.appendChild(btn);
   const box = document.createElement('div'); box.id = 'amc'; document.body.appendChild(box);
-  let tab = 'brief', status = '';
+  let tab = cfg.key ? 'brief' : 'guide', status = '';
   function setStatus(s) { status = s; const n = box.querySelector('#amc-status'); if (n) n.textContent = s; }
   btn.addEventListener('click', () => { const open = box.style.display !== 'block'; box.style.display = open ? 'block' : 'none'; if (open && !data) load(); else render(); });
 
   function render() {
-    const tabs = [['brief', 'Briefing'], ['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['settings', 'Settings']];
+    const tabs = data
+      ? [['brief', 'Briefing'], ['alloc', 'Allocation'], ['mix', 'Role mix'], ['trains', 'Trains'], ['health', 'Staff health'], ['setup', 'Setup'], ['guide', 'Guide'], ['settings', 'Settings']]
+      : [...(obs ? [['watch', 'Owner watch']] : []), ['guide', 'Guide'], ['settings', 'Settings']];
     let h = `<header><h2>Archer Mining Co advisor</h2>${tabs.map(([k, l]) => `<button class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}
       <button class="act" data-act="refresh">Refresh</button><span class="mut" id="amc-status">${esc(status)}</span></header><div class="body">`;
     if (lastErr) h += `<div class="rec w">${esc(lastErr)}</div>`;
     if (tab === 'settings') h += viewSettings();
-    else if (!data) h += `<p class="mut">No data yet. ${cfg.key ? 'Press Refresh.' : 'Add your Limited key in Settings.'}</p>`;
+    else if (tab === 'guide') h += viewGuide();
+    else if (tab === 'watch' && obs) h += viewWatch();
+    else if (!data) h += `<p class="mut">No data yet. ${cfg.key ? 'Press Refresh.' : 'Start with the <b>Guide</b> tab, then add your Limited key in Settings.'}</p>`;
     else if (tab === 'brief') h += viewBrief();
     else if (tab === 'alloc') h += runwayBanner() + viewAlloc();
     else if (tab === 'mix') h += runwayBanner() + viewMix();
@@ -493,12 +566,18 @@ function hungarian(c) {
 
   // ---- Stock runway (recent logged days first, else the model)
   function runway() {
-    const days = Object.keys(snaps).sort().slice(-4).map(d => snaps[d]).filter(s => s && s.sold > 0 && s.made > 0);
+    // Prefer days since the last setup change (2+ of them), so a new setup's drain isn't hidden by the old one.
+    let days = Object.keys(snaps).sort().slice(-4).map(d => snaps[d]).filter(s => s && s.sold > 0 && s.made > 0);
+    try {
+      const per = periods(), cur = per[per.length - 1];
+      const curDays = cur ? cur.days.filter(s => s.sold > 0 && s.made > 0).slice(-4) : [];
+      if (curDays.length >= 2) days = curDays;
+    } catch (e) { /* keep last 4 */ }
     // Opened every other day: "made" needs yesterday's log, so fall back to the stock change between logged days.
     const dayMs = d => Date.parse(d + 'T00:00:00Z');
     const stockDays = Object.keys(snaps).sort().filter(d => snaps[d] && snaps[d].stock != null && dayMs(d) >= Date.now() - 12 * 864e5);
     let net, src;
-    if (days.length >= 2) { net = days.reduce((a, s) => a + s.made - s.sold, 0) / days.length; src = `last ${days.length} logged days`; }
+    if (days.length >= 2) { net = days.reduce((a, s) => a + s.made - s.sold, 0) / days.length; src = `last ${days.length} logged days on this setup`; }
     else if (stockDays.length >= 2) {
       const a = stockDays[0], z = stockDays[stockDays.length - 1], span = (dayMs(z) - dayMs(a)) / 864e5;
       net = (snaps[z].stock - snaps[a].stock) / span; src = `stock change ${a} to ${z}`;
@@ -669,7 +748,10 @@ function hungarian(c) {
       <div class="tile">Last logged day<b>${last ? esc(last.day) : 'none yet'}</b><span class="mut">${last ? t(last.sold) + ' sold / ' + (last.made ? t(last.made) : '?') + ' made' : 'open the panel after 18:10 TCT each day'}</span></div>
       <div class="tile">Stock<b>${t(data.inStock)} t</b><span class="mut">${rw.net < -1 ? 'falling ' + t(-rw.net) + ' t/day' : rw.net > 1 ? 'rising ' + t(rw.net) + ' t/day' : 'steady'}</span></div>
       <div class="tile">Profit last day<b>${last && last.profit != null ? m$(last.profit) : '?'}</b><span class="mut">income ${last && last.income != null ? m$(last.income) : '?'}</span></div></div>
-      <h3>Next move</h3><div class="rec ${rec.level}">${rec.text}</div>`;
+      <h3>Next move</h3><div class="rec ${rec.level}">${rec.text}</div>
+      <h3>House rule checks</h3>${houseChecks().map(c => `<div class="rec ${c.ok ? '' : 'w'}">${c.ok ? '✔ ' : '⚠ '}${c.text}</div>`).join('')}
+      <p><button class="act" data-act="summary">Copy summary for ${esc(cfg.owner || 'the owner')}</button> <span class="mut" id="amc-sum-msg">Paste it into a Torn mail to ${esc(cfg.owner || 'the owner')} each day or two.</span></p>
+      <textarea id="amc-sum" rows="1" readonly style="position:absolute;left:-9999px"></textarea>`;
     if (cur && prev) {
       h += `<h3>Last change</h3>`;
       if (v && v.wait) h += `<div class="rec">Changed to <b>${esc(cur.key)}</b> on ${esc(cur.from)}. Needs ${v.wait} more day(s) before it can be judged.</div>`;
@@ -725,12 +807,148 @@ function hungarian(c) {
     return { stock: stockRows.length, comp: compRows.length, setups: stockRows.filter(r => snaps[r.day].se != null).length };
   }
 
+  // ---- House rule checks (shown in the Briefing and the owner summary)
+  function parseFixedWages() {
+    return String(cfg.fixedWages || '').split(/[\n,;]+/).map(x => x.trim()).filter(Boolean).map(x => {
+      const m = x.match(/^(.+?)\s*=\s*\$?([\d.,]+)\s*(m|k)?$/i); if (!m) return null;
+      let v = parseFloat(m[2].replace(/,/g, '')); if (/m/i.test(m[3] || '')) v *= 1e6; else if (/k/i.test(m[3] || '')) v *= 1e3;
+      return { name: m[1].trim(), wage: v };
+    }).filter(Boolean);
+  }
+  function houseChecks() {
+    const hr = cfg.house, out = [];
+    const cnt = r => data.emps.filter(e => norm(e.position) === r).length;
+    if (data.price && Math.round(data.price) !== Math.round(hr.price)) out.push({ ok: false, text: `Price is $${t(data.price)}; house price is $${t(hr.price)}. Change it back unless you are running an agreed test.` });
+    else out.push({ ok: true, text: `Price $${t(data.price)} (house price).` });
+    if (Math.abs(data.ads - hr.ads) > 0.01) out.push({ ok: false, text: `Ad budget is $${data.ads}m; house budget is $${hr.ads}m. More than this was measured to lose money; less loses sales.` });
+    else out.push({ ok: true, text: `Ads $${data.ads}m a day (house budget).` });
+    if (!cnt('mine engineer')) out.push({ ok: false, text: `No Mine Engineer. It costs up to ${t(cfg.model.meLoss)} t a day of production; fill it when stock is running down.` });
+    if (data.capacity && data.emps.length < data.capacity) out.push({ ok: false, text: `${data.emps.length} of ${data.capacity} staff. Hire to fill the empty slot${data.capacity - data.emps.length > 1 ? 's' : ''}.` });
+    const wagesDay = data.emps.reduce((a, e) => a + e.wage, 0), costs = wagesDay + data.ads * 1e6, floor = costs * (+hr.bankDays || 7);
+    if (data.funds != null) out.push(data.funds < floor
+      ? { ok: false, text: `Company bank ${m$(data.funds)} is below the ${hr.bankDays}-day floor of ${m$(floor)} (wages ${m$(wagesDay)} + ads ${m$(data.ads * 1e6)} a day). Don't withdraw until it recovers.` }
+      : { ok: true, text: `Company bank ${m$(data.funds)}, above the ${hr.bankDays}-day floor of ${m$(floor)}. ${m$(data.funds - floor)} could be withdrawn.` });
+    parseFixedWages().forEach(f => {
+      const e = data.emps.find(x => norm(x.name) === norm(f.name));
+      if (e && Math.abs(e.wage - f.wage) > 1) out.push({ ok: false, text: `${esc(e.name)}'s wage is ${m$(e.wage)}; the agreed wage is ${m$(f.wage)}. Set it back (see the Guide).` });
+      else if (e) out.push({ ok: true, text: `${esc(e.name)}'s wage is at the agreed ${m$(f.wage)}.` });
+    });
+    const b = data.boosts;
+    if (b) ['TCP', 'TGP'].forEach(acr => {
+      const x = b[acr]; if (!x) return;
+      const what = acr === 'TCP' ? 'company sales boost' : 'company advertising boost';
+      if (!x.full) out.push({ ok: false, text: `You hold ${t(x.shares)} of the ${t(x.req)} ${acr} shares needed for the ${what}. The company runs without it until you hold a full block${x.cost ? ' (about ' + m$(x.cost) + ' more)' : ''}.` });
+      else out.push({ ok: x.ready !== false, text: `${acr} block held (${what})${x.ready === false ? ', not active yet' + (x.progress ? ' (' + x.progress + ')' : '') : ''}.` });
+    });
+    else out.push({ ok: true, text: '<span class="mut">TCP/TGP boosts could not be read with this key (needs a Limited key).</span>' });
+    return out;
+  }
+  function summaryText() {
+    const per = periods(), rw = runway(), rec = recommend(per, rw), last = loggedDays().slice(-1)[0], cur = per[per.length - 1], prev = per[per.length - 2], v = verdictOf(prev, cur);
+    const plain = h => String(h).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    const stock = data.inStock || 0;
+    const runTxt = rw.net < -1 ? `falling ${t(-rw.net)} t/day, about ${(stock / -rw.net).toFixed(0)} days left` : rw.net > 1 ? `rising ${t(rw.net)} t/day` : 'steady';
+    const issues = houseChecks().filter(c => !c.ok).map(c => '- ' + plain(c.text));
+    return [
+      `${data.name || 'Company'} report, ${last ? last.day : 'today'}`,
+      cur && cur.key ? `Setup: ${cur.key}` : '',
+      last ? `Sold ${t(last.sold)} t, made ${last.made ? t(last.made) : '?'} t. Stock ${t(stock)} t (${runTxt}).` : `Stock ${t(stock)} t (${runTxt}).`,
+      last && last.income != null ? `Income ${m$(last.income)}, profit ${last.profit != null ? m$(last.profit) : '?'}. Customers ${last.customers ?? '?'}.` : '',
+      `Bank ${data.funds != null ? m$(data.funds) : '?'}. Popularity ${data.popularity ?? '?'}%, environment ${data.environment ?? '?'}%.`,
+      v && !v.wait ? `Last change (${cur.from}): sold ${sg(v.dSold)} t/day${v.dProfit != null ? ', profit ' + d$(v.dProfit) + '/day' : ''}: ${v.call}.` : '',
+      `Advisor says: ${plain(rec.text)}`,
+      issues.length ? 'Checks needing attention:\n' + issues.join('\n') : 'All house rules met.'
+    ].filter(Boolean).join('\n');
+  }
+
+  // ---- Guide for a new director
+  function viewGuide() {
+    const hr = cfg.house, fw = parseFixedWages();
+    return `<div class="rec">This advisor reads the company through the Torn API and tells you what to do next. It never changes anything in Torn: you make every change yourself.</div>
+      <h3>Setting up (once)</h3><ol>
+        <li>On Torn: Settings → API Keys → create a key with <b>Limited</b> access. Never use a Full access key in any script.</li>
+        <li>Paste it in this panel's <b>Settings</b> tab and press Save key.</li>
+        <li>In the Briefing tab, paste the company's <b>Stock records</b> and <b>Company records</b> tables (from the company page) into "Fill in history" and press Import, so the advisor can compare setups straight away.</li>
+      </ol>
+      <h3>Daily routine (about 2 minutes)</h3><ol>
+        <li>After the daily update at 18:10 TCT (2:10 am in Perth), open the company page and click <b>AMC advisor</b>. Every other day is fine too.</li>
+        <li><b>Briefing → Next move</b>: do what it says, or nothing if it says Hold. Make one change at a time; it judges each change after 3 days.</li>
+        <li><b>House rule checks</b>: fix anything marked ⚠.</li>
+        <li>Press <b>Copy summary for ${esc(cfg.owner || 'the owner')}</b> and paste it into a Torn mail to ${esc(cfg.owner || 'the owner')}.</li>
+        <li>Use any company trains (Trains tab) before they reach 20; trains over 20 are wasted.</li>
+      </ol>
+      <h3>House rules</h3><ul>
+        <li>Price <b>$${t(hr.price)}</b> a ton. Lower prices were tested and did not earn more.</li>
+        <li>Advertising <b>$${hr.ads}m</b> a day. Ads lift sales about 40%; more than this was not worth the cost.</li>
+        <li>Sales Executives and Secretaries make the money. Add a Sales Executive when stock covers 25+ days; move one back to Mill Operator when stock will run out within about 2 weeks. The Briefing works this out.</li>
+        <li>Keep a Mine Engineer when production is short: an empty Mine Engineer costs up to ${t(cfg.model.meLoss)} t a day.</li>
+        <li>Never move more than one or two people at once (a five-move reshuffle on 6 Nov cost $9m in a day).</li>
+        <li>Wages: about <b>${cfg.wageMult || 20}× the employee's highest working stat</b> a day. The Briefing lists anyone paid above that.</li>
+        ${fw.length ? `<li>Agreed wages that must not change: ${fw.map(f => `<b>${esc(f.name)} ${m$(f.wage)}</b>`).join(', ')}.</li>` : ''}
+        <li>Keep at least <b>${hr.bankDays} days</b> of wages + ads in the company bank. Only withdraw above that (the Briefing shows the amount).</li>
+        <li>The director should hold full <b>TCP</b> (sales boost) and <b>TGP</b> (advertising boost) blocks. The Briefing checks this.</li>
+        <li>Site Manager (Manager special) and Safety Inspector (Cleaner special) are locked: don't move them.</li>
+      </ul>
+      <h3>Hiring</h3><ul>
+        <li>Mill Operator: high <b>manual labour</b> and endurance. Sales Executive: high <b>intelligence</b> and endurance. Secretary: endurance then intelligence.</li>
+        <li>Pick active players who log in daily and don't use drugs heavily; addiction and inactivity lower effectiveness and the company environment.</li>
+        <li>New hires take just over a week to settle in, so don't judge them in week one.</li>
+        <li>Torn Quick Mail (same GitHub) adds a ✉ next to player names and fills in the recruitment mail.</li>
+      </ul>
+      <h3>What each tab does</h3><ul>
+        <li><b>Briefing</b>: next move, house rule checks, last change verdict, results by setup, owner summary, history import.</li>
+        <li><b>Allocation</b>: who fits which role best. Only acts on gains above the minimum.</li>
+        <li><b>Role mix</b>: how many Sales Executives vs Mill Operators earns most, and how long stock lasts.</li>
+        <li><b>Trains</b>: who gains most from each company train.</li>
+        <li><b>Staff health</b>: lowest effectiveness first, with addiction, inactivity and trends.</li>
+        <li><b>Setup</b>: model estimates for ads, Mill Operator count and price tests.</li>
+      </ul>
+      <h3>Words used</h3><p class="mut">SE Sales Executive · Sec/Se Secretary · MO Mill Operator · ME Mine Engineer · PF Production Foreman · El Electrician · SM Site Manager · SI Safety Inspector · EE employee effectiveness · TCT Torn City Time (UTC) · runway = days until stock runs out.</p>`;
+  }
+
+  // ---- Owner watch mode view
+  function viewWatch() {
+    const hr = cfg.house, o = obs;
+    const days = Object.keys(obsSnaps).sort().map(d => Object.assign({ day: d }, obsSnaps[d]));
+    const rc = r => o.emps.filter(e => norm(e.position) === r).length;
+    const now = Date.now() / 1000;
+    const idle = o.emps.filter(e => e.lastTs && now - e.lastTs > 2 * 86400).sort((a, b) => a.lastTs - b.lastTs);
+    const alerts = [];
+    const lowRun = days.slice(-3).filter(d => d.income != null && d.income < hr.minIncome * 1e6).length;
+    if (o.income != null && o.income < hr.minIncome * 1e6) alerts.push(`Daily income ${m$(o.income)} is below your ${m$(hr.minIncome * 1e6)} benchmark${lowRun >= 3 ? ' for the last 3 logged days' : ''}.`);
+    if (o.hired != null && o.capacity && o.hired < o.capacity) alerts.push(`${o.hired} of ${o.capacity} staff: ${o.capacity - o.hired} slot(s) empty.`);
+    if (!rc('mine engineer')) alerts.push('No Mine Engineer.');
+    if (idle.length) alerts.push(`${idle.length} employee(s) inactive for 2+ days: ${idle.map(e => esc(e.name)).join(', ')}.`);
+    const y = days[days.length - 2];
+    if (y && (y.se !== rc('sales executive') || y.mo !== rc('mill operator') || y.me !== rc('mine engineer'))) alerts.push(`Roles changed since ${y.day}: ${y.se} SE / ${y.mo} MO / ${y.me ? 'ME' : 'no ME'} → ${rc('sales executive')} SE / ${rc('mill operator')} MO / ${rc('mine engineer') ? 'ME' : 'no ME'}.`);
+    if (y && y.director && o.director && y.director !== o.director) alerts.push(`Director changed (ID ${y.director} → ${o.director}).`);
+    let h = `<div class="rec">Owner watch mode: <b>${esc(o.name || 'company ' + cfg.watchId)}</b>. This key isn't the director's, so only public figures are shown (no stock, wages, ads or profit). Ask the director for the advisor's daily summary for those.</div>
+      <div class="tiles"><div class="tile">Daily income<b>${o.income != null ? m$(o.income) : '?'}</b><span class="mut">${o.customers ?? '?'} customers; benchmark ${m$(hr.minIncome * 1e6)}+</span></div>
+      <div class="tile">Weekly income<b>${o.weekly != null ? m$(o.weekly) : '?'}</b><span class="mut">${o.weeklyCustomers ?? '?'} customers</span></div>
+      <div class="tile">Staff<b>${o.hired ?? o.emps.length} / ${o.capacity ?? '?'}</b><span class="mut">${rc('sales executive')} SE · ${rc('secretary')} Sec · ${rc('mill operator')} MO · ${rc('mine engineer') ? 'ME' : 'no ME'}</span></div></div>
+      <h3>Alerts</h3>${alerts.length ? alerts.map(a => `<div class="rec w">⚠ ${a}</div>`).join('') : '<div class="rec">✔ Nothing unusual.</div>'}
+      <h3>History (logged each day you open this)</h3><div class="sc"><table><tr><th class="l">Day</th><th>Income</th><th>Customers</th><th>Weekly</th><th>Staff</th><th class="l">Roles</th></tr>` +
+      days.slice(-14).reverse().map(d => `<tr><td class="l">${esc(d.day)}</td><td class="${d.income < hr.minIncome * 1e6 ? 'neg' : ''}">${d.income != null ? m$(d.income) : ''}</td><td>${d.customers ?? ''}</td><td>${d.weekly != null ? m$(d.weekly) : ''}</td><td>${d.staff}/${d.cap ?? '?'}</td><td class="l">${d.se} SE · ${d.sec} Sec · ${d.mo} MO · ${d.me ? 'ME' : 'no ME'}</td></tr>`).join('') + `</table></div>
+      <h3>Staff</h3><div class="sc"><table><tr><th class="l">Employee</th><th class="l">Role</th><th>Days</th><th class="l">Last active</th><th class="l">Status</th></tr>` +
+      o.emps.slice().sort((a, b) => (a.lastTs || 0) - (b.lastTs || 0)).map(e => `<tr><td class="l">${esc(e.name)}</td><td class="l">${esc(e.position)}</td><td>${e.days ?? ''}</td><td class="l ${e.lastTs && now - e.lastTs > 2 * 86400 ? 'wrn' : ''}">${esc(e.last)}</td><td class="l mut">${esc(e.status)}</td></tr>`).join('') + `</table></div>`;
+    return h;
+  }
+
   // ---- Settings
   function viewSettings() {
     const m = cfg.model;
     const fld = (k, l) => `<label>${l}<input type="number" step="any" data-m="${k}" value="${m[k]}"></label>`;
     return `<h3>API key</h3><p class="mut">Use a <b>Limited</b> access key (Settings, API Keys on Torn), never Full access. It is stored only in Tampermonkey on this browser and sent only to api.torn.com when you press Refresh or open the panel.</p>
       <label>Limited API key<input type="password" id="amc-key" value="${esc(cfg.key)}" style="width:220px"></label> <button class="act" data-act="savekey">Save key</button>
+      <h3>House rules</h3><p class="mut">The Briefing checks these every day and the Guide explains them.</p>
+      <label>House price $<input type="number" step="1" data-house="price" value="${cfg.house.price}"></label>
+      <label>House ad budget $m<input type="number" step="0.5" data-house="ads" value="${cfg.house.ads}"></label>
+      <label>Bank floor (days of wages + ads)<input type="number" step="1" data-house="bankDays" value="${cfg.house.bankDays}"></label>
+      <label>Income benchmark $m/day (watch mode)<input type="number" step="1" data-house="minIncome" value="${cfg.house.minIncome}"></label>
+      <label>Owner (summary goes to)<input type="text" data-cfgs="owner" value="${esc(cfg.owner)}"></label>
+      <label style="min-width:260px">Agreed wages that must not change (name=wage, e.g. scorp=0, Bob=2.5m)<input type="text" data-cfgs="fixedWages" value="${esc(cfg.fixedWages)}" style="width:260px"></label>
+      <h3>Owner watch mode</h3><p class="mut">For when you are no longer the director. Enter the company's ID (the number in its company profile link). If your key can't read the director view, the panel shows the company's public figures instead: income, customers, staff, roles and inactive staff, logged daily with alerts.</p>
+      <label>Company ID to watch<input type="text" data-cfgs="watchId" value="${esc(cfg.watchId)}"></label> <button class="act" data-act="watch">Open watch mode now</button>
       <h3>Effectiveness</h3><label>Education bonus (0 = fit automatically)<input type="number" step="0.005" data-cfg="bonus" value="${cfg.bonus}"></label>
       <label>Minimum gain to suggest a change (weighted EE)<input type="number" step="0.5" data-cfg="minGain" value="${cfg.minGain}"></label>
       <label>Minimum EE for support roles<input type="number" step="1" data-cfg="floor" value="${cfg.floor}"></label>
@@ -751,7 +969,13 @@ function hungarian(c) {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.tab) { tab = b.dataset.tab; render(); }
     else if (b.dataset.act === 'refresh') load();
-    else if (b.dataset.act === 'savekey') { cfg.key = box.querySelector('#amc-key').value.trim(); saveCfg(); tab = 'alloc'; load(); }
+    else if (b.dataset.act === 'savekey') { cfg.key = box.querySelector('#amc-key').value.trim(); saveCfg(); tab = 'brief'; load(); }
+    else if (b.dataset.act === 'watch') { if (cfg.watchId) { data = null; loadWatch(); } else { lastErr = 'Enter the company ID to watch first.'; render(); } }
+    else if (b.dataset.act === 'summary') {
+      const txt = summaryText(), ta = box.querySelector('#amc-sum'), msg = box.querySelector('#amc-sum-msg');
+      const done = ok => { if (msg) msg.textContent = ok ? 'Copied. Paste it into a Torn mail.' : 'Copy blocked by the browser: select the text below and copy it.'; if (!ok && ta) { ta.style.cssText = 'width:100%;height:9em;background:#141917;color:#e6ebe8;border:1px solid #2f3835'; ta.value = txt; ta.select(); } };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); else done(false);
+    }
     else if (b.dataset.act === 'fit') doFit();
     else if (b.dataset.act === 'applyfit') { const f = box.querySelector('#amc-fit')._fit; if (f) { Object.assign(cfg.model, { D0: Math.round(f.D0), adA: f.A, adK: f.K, elast: f.E }); saveCfg(); render(); } }
     else if (b.dataset.act === 'resetw') { cfg.weights = Object.assign({}, DEF_W); cfg.lockRoles = DEF.lockRoles.slice(); cfg.locks = {}; cfg.minGain = DEF.minGain; cfg.floor = DEF.floor; cfg.floorRoles = DEF.floorRoles.slice(); saveCfg(); render(); }
@@ -770,6 +994,8 @@ function hungarian(c) {
     else if (el.dataset.w) { cfg.weights[el.dataset.w] = parseFloat(el.value) || 0; saveCfg(); render(); }
     else if (el.dataset.m) { cfg.model[el.dataset.m] = parseFloat(el.value) || 0; saveCfg(); }
     else if (el.dataset.cfg) { cfg[el.dataset.cfg] = parseFloat(el.value) || 0; saveCfg(); }
+    else if (el.dataset.cfgs) { cfg[el.dataset.cfgs] = el.value.trim(); saveCfg(); }
+    else if (el.dataset.house) { cfg.house[el.dataset.house] = parseFloat(el.value) || 0; saveCfg(); }
     else if (el.id === 'amc-fitprice') { cfg.fitPrice = el.checked; saveCfg(); }
   });
 })();
