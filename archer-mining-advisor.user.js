@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Archer Mining Co Advisor
 // @namespace    sterlingarcher.torn
-// @version      2.5.4
+// @version      2.5.5
 // @description  Display-only company advisor for a Mining Corporation: simple mode for a new director (next move, problems, owner summary, trains), built-in guide, house-rule checks (price, ads, wages, Mine Engineer, TCP/TGP boosts, bank floor), owner summary and an owner watch mode, daily briefing with a recommended next move, staff allocation by total EE, role-mix planner (how many Sales Executives vs Mill Operators), EE-based production with stock runway, train planner, staff health and a best-guess setup model. Reads the Torn API with your Limited key only when you open or refresh the panel.
 // @match        https://www.torn.com/companies.php*
 // @match        https://www.torn.com/joblist.php*
@@ -142,7 +142,7 @@ function hungarian(c) {
   const set = (k, v) => GM_setValue(k, JSON.stringify(v));
   const DEF = {
     key: '', bonus: 0, weights: {}, locks: {},
-    house: { price: 8625, ads: 10, minIncome: 80, bankDays: 7 }, advanced: false, fixedWages: 'scorp=0', owner: 'SterlingArcher', watchId: '', lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
+    house: { price: 8625, ads: 10, minIncome: 80, bankDays: 7 }, advanced: false, addSeDays: 60, fixedWages: 'scorp=0', owner: 'SterlingArcher', watchId: '', lockRoles: ['site manager', 'safety inspector'], minGain: 50, floor: 90, floorRoles: ['mine engineer', 'production foreman', 'electrician', 'secretary'],
     model: { D0: 6848, refPrice: 8625, adA: 0.40, adK: 3.5, elast: -0.8, prodBase: 1980, prodPerMO: 920, otherCosts: 0, warehouseCap: 40000,
              refEE: 115, meLoss: 1600, refSE: 518, seElast: 0.25 },
     seedLog: [
@@ -713,6 +713,7 @@ function hungarian(c) {
     const ses = data.emps.filter(e => norm(e.position) === 'sales executive' && !isLocked(e));
     const curEE = e => e.total ? e.total - (+(e.eff && e.eff.management) || 0) : (tot(e, norm(e.position), b) || 0);
     const warnDays = +cfg.warnDays || 14; // opened every other day, so act with a buffer
+    const addDays = +cfg.addSeDays || 60;   // only add a seller when stock covers this many days
     // The production fix, worked out once so a "hold" can still name who moves next.
     const fixShort = () => {
       if (!me) {
@@ -747,7 +748,7 @@ function hungarian(c) {
     if (cur && per.length >= 2 && cur.span < 3) return { level: '', text: `Your setup changed on ${cur.from}. <b>Hold</b> for ${3 - cur.span} more day(s) so the change can be judged.` };
     // Adding a seller drains stock, so only do it on real logged results, never on the model's guess alone.
     if (rw.fromModel || per.length < 2 && (!cur || cur.n < 3)) return { level: '', text: `<b>Hold.</b> Not enough logged days yet to judge stock (${cur ? cur.n : 0} so far). Open this again after the next daily run, or import the Stock and Company records (bottom of this tab) to judge straight away.` };
-    if ((daysEmpty > 25 || daysCap < 20) && se < 6) {
+    if ((daysEmpty > addDays || daysCap < 20) && se < 6) {
       const c = mos.map(e => ({ e, seEE: tot(e, 'sales executive', b) || 0, moEE: curEE(e) })).filter(x => x.seEE >= 110)
         .sort((x, y) => (y.seEE - y.moEE) - (x.seEE - x.moEE))[0];
       if (c) {
@@ -757,7 +758,7 @@ function hungarian(c) {
         return { level: '', text: `Stock ${t(stock)} t with ${isFinite(daysEmpty) ? daysEmpty.toFixed(0) + ' days to empty' : 'no shortage'}${isFinite(daysCap) ? ', ' + daysCap.toFixed(0) + ' days to the cap' : ''}: room to sell more. <b>Move ${esc(c.e.name)} from Mill Operator to Sales Executive</b> (${c.moEE} EE as MO, ${c.seEE} as SE). Model: demand ${sg(after.dem - now.dem)} t/day, about ${d$((after.dem - now.dem) * p.price)}/day while stock lasts; stock then ${net < -1 ? 'falls about ' + t(-net) + ' t/day (' + (stock / -net).toFixed(0) + ' days)' : 'holds'}.` };
       }
     }
-    return { level: '', text: `<b>Hold.</b> Stock ${t(stock)} t, ${rw.net < -1 ? 'falling ' + t(-rw.net) : rw.net > 1 ? 'rising ' + t(rw.net) : 'steady at'} t/day. No change clears the rules (add a Sales Executive when 25+ days of stock; cut one when under 14).` };
+    return { level: '', text: `<b>Hold.</b> Stock ${t(stock)} t, ${rw.net < -1 ? 'falling ' + t(-rw.net) : rw.net > 1 ? 'rising ' + t(rw.net) : 'steady at'} t/day. No change clears the rules (add a Sales Executive when ${addDays}+ days of stock or near the storage cap; cut one when under ${warnDays}).` };
   }
   function costCheck() {
     const days = loggedDays().filter(s => s.income != null && s.profit != null);
@@ -825,7 +826,7 @@ function hungarian(c) {
       <h3>Fill in history</h3><p class="mut">The briefing logs a day each time you open the panel after the 18:10 TCT update. To fill gaps, copy the <b>Stock records</b> and <b>Company records</b> tables from your company page (select from the Date header to the last row), paste below and press Import. Pasting the same days again just updates them.</p>
       <textarea id="amc-import" rows="5" style="width:100%;background:#141917;color:#e6ebe8;border:1px solid #2f3835;border-radius:4px;font:12px monospace" placeholder="Paste Stock records and/or Company records here"></textarea>
       <p><button class="act" data-act="import">Import</button> <span class="mut" id="amc-import-msg"></span></p>
-      <p class="mut">Rules: add a Sales Executive when stock covers 25+ days or the cap is under 20 days away; move one back when stock runs out within 14 days; otherwise hold, and judge each change after 3 logged days. The advisor suggests; you make the change in Torn.</p>`;
+      <p class="mut">Rules: add a Sales Executive when stock covers ${+cfg.addSeDays || 60}+ days or the cap is under 20 days away; move one back when stock runs out within ${+cfg.warnDays || 14} days; otherwise hold, and judge each change after 3 logged days. The advisor suggests; you make the change in Torn.</p>`;
     return h;
   }
 
@@ -966,7 +967,7 @@ function hungarian(c) {
       <h3>House rules</h3><ul>
         <li>Price <b>$${t(hr.price)}</b> a ton. Lower prices were tested and did not earn more.</li>
         <li>Advertising <b>$${hr.ads}m</b> a day. Ads lift sales about 40%; more than this was not worth the cost.</li>
-        <li>Sales Executives and Secretaries make the money. Add a Sales Executive when stock covers 25+ days; move one back to Mill Operator when stock will run out within about 2 weeks. The Briefing works this out.</li>
+        <li>Sales Executives and Secretaries make the money. Add a Sales Executive when stock covers ${+cfg.addSeDays || 60}+ days (or is close to the 40,000 t storage cap); move one back when stock will run out within about ${+cfg.warnDays || 14} days. The Briefing works this out.</li>
         <li>Keep a Mine Engineer when production is short: an empty Mine Engineer costs up to ${t(cfg.model.meLoss)} t a day.</li>
         <li>Never move more than one or two people at once (a five-move reshuffle on 6 Nov cost $9m in a day).</li>
         <li>Wages: about <b>${cfg.wageMult || 20}× the employee's highest working stat</b> a day. The Briefing lists anyone paid above that.</li>
@@ -977,7 +978,7 @@ function hungarian(c) {
       </ul>
       <h3>Why the setup goes back and forth</h3><ul>
         <li>The mine can sell more salt than it can make. So it runs in a cycle, and the Briefing tells you which step you're on:</li>
-        <li><b>Plenty of stock (25+ days):</b> move a Mill Operator to <b>Sales Executive</b> to sell more (up to 6). Stock then starts falling.</li>
+        <li><b>Plenty of stock (${+cfg.addSeDays || 60}+ days, or close to the storage cap):</b> move a Mill Operator to <b>Sales Executive</b> to sell more (up to 6). Stock then starts falling.</li>
         <li><b>Stock under about 14 days and no Mine Engineer:</b> move your best Mill Operator to <b>Mine Engineer</b>. That's worth one to two Mill Operators of output.</li>
         <li><b>Still under 14 days with a Mine Engineer:</b> move the weakest <b>Sales Executive back to Mill Operator</b>.</li>
         <li>Between those points: <b>Hold</b>. After any change, wait for the Briefing to judge it (2 to 3 days) before the next one, unless stock is under 5 days.</li>
@@ -1052,6 +1053,8 @@ function hungarian(c) {
       <h3>Effectiveness</h3><label>Education bonus (0 = fit automatically)<input type="number" step="0.005" data-cfg="bonus" value="${cfg.bonus}"></label>
       <label>Minimum gain to suggest a change (weighted EE)<input type="number" step="0.5" data-cfg="minGain" value="${cfg.minGain}"></label>
       <label>Minimum EE for support roles<input type="number" step="1" data-cfg="floor" value="${cfg.floor}"></label>
+      <label>Add a Sales Executive above (days of stock)<input type="number" step="1" data-cfg="addSeDays" value="${+cfg.addSeDays || 60}"></label>
+      <label>Act when stock runs out within (days)<input type="number" step="1" data-cfg="warnDays" value="${+cfg.warnDays || 14}"></label>
       <label>Wage formula: × highest working stat<input type="number" step="1" data-cfg="wageMult" value="${cfg.wageMult || 20}"></label>
       <p class="mut">Support roles with a minimum: ${Object.keys(REQ).map(r => `<label style="flex-direction:row;align-items:center;gap:4px"><input type="checkbox" data-floorrole="${r}" ${(cfg.floorRoles || []).includes(r) ? 'checked' : ''}>${ROLE_NAMES[r]}</label>`).join('')}</p>
       <h3>Locked roles</h3><p class="mut">Holders of these roles are never moved. Site Manager (Manager special) and Safety Inspector (Cleaner special) are locked by default.</p>

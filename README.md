@@ -39,6 +39,7 @@ Make role changes in small steps and check the next day's income before making m
 
 | Version | Date | Change |
 |---|---|---|
+| 2.5.5 | 27 Nov 2026 | New setting **Add a Sales Executive above (days of stock)**, default **60** (was a fixed 25), so a balanced setup is left alone instead of cycling to sell down spare stock. **Act when stock runs out within (days)** (default 14) is now in Settings too. Guide and hold messages show the current values. |
 | 2.5.4 | 26 Nov 2026 | Fixes a wrong "add a Sales Executive" right after a role change. A change made since the last daily run now gives a Hold (3 days) naming the old and new setup. Each day keeps the setup that actually ran at 18:10 TCT, so a later change that day isn't credited with its results. The advisor never adds a seller on the model's estimate alone: with too little logged history it says Hold and suggests importing records. |
 | 2.5.3 | 26 Nov 2026 | A "hold" now still names the planned move (e.g. who goes to Mine Engineer next). The first logged day on a new device or browser is no longer mistaken for a setup change, which had caused a false hold with no name. |
 | 2.5.2 | 26 Nov 2026 | When stock is running out and the Mine Engineer is empty with 5+ Sales Executives, the advice is now to move the **weakest Sales Executive** to Mine Engineer (same stats, keeps every Mill Operator, brings sales and production close to balance in one move) instead of taking a Mill Operator. |
